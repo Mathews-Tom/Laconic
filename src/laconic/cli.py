@@ -149,6 +149,11 @@ from laconic.runtime.storage import (
     UnsafeStoragePathError,
     resolve_data_dir,
 )
+from laconic.spend.cli import DEFAULT_SESSION_DIR, WrittenReport, measure, write_report
+from laconic.spend.join import DuplicateSessionError
+from laconic.spend.omp import MalformedSessionError
+from laconic.spend.privacy import PrivacyViolationError
+from laconic.spend.report import DEFAULT_OUTPUT_DIR
 from laconic.study.analysis import MINIMUM_PARTICIPANTS
 from laconic.study.dryrun import DEFAULT_PARTICIPANT_COUNT, DryRunResult
 from laconic.study.dryrun import run as run_study_dry_run
@@ -187,6 +192,8 @@ EXIT_K1_STAGE_C_INCOMPLETE = 24
 EXIT_OMP_INSTALL_ERROR = 25
 EXIT_RUNTIME_STORAGE_ERROR = 26
 EXIT_RUNTIME_REFERENCE_ERROR = 27
+EXIT_SPEND_SOURCE_ERROR = 28
+EXIT_SPEND_PRIVACY_ERROR = 29
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -477,6 +484,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="seconds to wait for a narration provider (default: 5)",
     )
     view.set_defaults(handler=_view)
+
+    spend = research_subcommands.add_parser(
+        "spend",
+        help="local, read-only spend composition for this machine's own sessions",
+    )
+    spend_subcommands = spend.add_subparsers(dest="spend_command")
+    spend_report = spend_subcommands.add_parser(
+        "report",
+        help="join host session spend to what the runtime codec did",
+        description=(
+            "Read OMP session usage and the runtime ledger, both read-only, and "
+            "report where model spend went in the owner's own sessions alongside "
+            "what the codec did in them. Every session read ran with the codec "
+            "enabled, so this reports composition only: it contains no savings "
+            "figure and no counterfactual can be derived from it."
+        ),
+    )
+    spend_report.add_argument(
+        "--sessions",
+        type=Path,
+        action="append",
+        metavar="DIR",
+        help=f"OMP session directory to scan (default: {DEFAULT_SESSION_DIR})",
+    )
+    spend_report.add_argument(
+        "--data-dir",
+        type=Path,
+        metavar="DIR",
+        help="runtime storage root (default: the platform data directory)",
+    )
+    spend_report.add_argument(
+        "--output",
+        type=Path,
+        metavar="DIR",
+        help=f"directory for the generated report (default: {DEFAULT_OUTPUT_DIR})",
+    )
+    spend_report.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="stdout format; both files are written regardless",
+    )
+    spend_report.set_defaults(handler=_spend_report)
 
     study = research_subcommands.add_parser(
         "study",
@@ -1542,6 +1592,79 @@ def _view(args: argparse.Namespace) -> int:
                     print(render_narration(narration))
     finally:
         fixture.ledger.close()
+    return EXIT_OK
+
+
+def _print_spend_summary(written: WrittenReport) -> None:
+    payload = written.report.payload
+    codec = payload["codec"]
+    shares = payload["corpus_shares"]
+    print("Local spend composition — no savings claim, no counterfactual.\n")
+    print(
+        f"  sessions with priced turns: {payload['sessions_with_spend']} "
+        f"({payload['root_sessions']} root, {payload['nested_sessions']} subagent), "
+        f"{payload['priced_turns']} turns"
+    )
+    print(
+        f"  joined: {payload['matched_sessions']} matched, "
+        f"{payload['unmatched_spend_sessions']} spend-only, "
+        f"{payload['unmatched_ledger_sessions']} ledger-only, "
+        f"{payload['damaged_ledgers']} damaged"
+    )
+    if shares is None:
+        print("  no spend recorded, so there is nothing to apportion")
+    else:
+        print(
+            f"  where it went: uncached input {shares['uncached_input']:.2f}%, "
+            f"cache read {shares['cache_read']:.2f}%, "
+            f"cache write {shares['cache_write']:.2f}%, "
+            f"output {shares['output']:.2f}%"
+        )
+    print(
+        f"  modelled ${payload['corpus_cost']['total']:,.2f} (laconic.costs) versus "
+        f"${payload['corpus_host_cost_usd']:,.2f} (host-reported)"
+    )
+    print(
+        f"  codec, in the matched sessions: {codec['eligible']} eligible, "
+        f"{codec['emitted']} replaced, {codec['chars_avoided']:,} characters avoided"
+    )
+    if payload["unpriced_models"]:
+        print(f"  models with no list price: {', '.join(payload['unpriced_models'])}")
+    if payload["unknown_usage_keys"]:
+        print(f"  unmodelled host usage keys: {', '.join(payload['unknown_usage_keys'])}")
+    print(f"\n  wrote {written.json_path}\n  wrote {written.markdown_path}")
+
+
+def _spend_report(args: argparse.Namespace) -> int:
+    try:
+        composition = measure(session_dirs=args.sessions, data_dir=args.data_dir)
+    except (
+        DuplicateSessionError,
+        MalformedSessionError,
+        UnsafeStoragePathError,
+        sqlite3.Error,
+        OSError,
+    ) as error:
+        print(f"laconic research spend report: {error}", file=sys.stderr)
+        return EXIT_SPEND_SOURCE_ERROR
+    try:
+        written = write_report(
+            composition,
+            args.output,
+            session_dirs=args.sessions,
+            data_dir=args.data_dir,
+        )
+    except PrivacyViolationError as error:
+        print(f"laconic research spend report: {error}", file=sys.stderr)
+        return EXIT_SPEND_PRIVACY_ERROR
+    except OSError as error:
+        print(f"laconic research spend report: cannot write the report: {error}", file=sys.stderr)
+        return EXIT_SPEND_SOURCE_ERROR
+
+    if args.format == "json":
+        print(written.report.to_json(), end="")
+    else:
+        _print_spend_summary(written)
     return EXIT_OK
 
 

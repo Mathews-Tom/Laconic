@@ -222,3 +222,8 @@ node_modules/
 # receipts, and generated reports. The tracked report lives under
 # docs/runtime-beta-report.md and contains only its aggregate output.
 .laconic/beta/
+
+# Local spend-composition reports. Content-free by construction and checked
+# by an allowlist, but still a record of the owner's own sessions and their
+# cost -- local evidence, not a repository artifact.
+.laconic/spend/
