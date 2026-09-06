@@ -80,7 +80,7 @@ Version 0.8.0 contains the deterministic codec and recovery ledger but no live c
 
 **Not a general savings result.** The beta may report observed raw and visible character counts for its own sessions. General token, cost, cache, and behavior claims require representative paired evidence, model-specific accounting, induced-work measurement, and behavior evaluation.
 
-**Not released as a runtime yet.** The current package is version 0.8.0. The OMP runtime candidate is implemented but remains gated by real OMP qualification and human sign-off over exact recovery, fail-open behavior, a 250 ms deadline, private local storage, operator control, and built-package behavior. The committed fixture's 8.53% K1 result validates the research gate machinery but no longer blocks this bounded product gate.
+**Not published as a runtime yet.** The published package is version 0.8.0; this checkout is 0.9.0. The OMP runtime candidate has passed real OMP qualification and its human sign-off over exact recovery, fail-open behavior, a 250 ms deadline, private local storage, operator control, and built-package behavior (`docs/runtime-beta-report.md`), and awaits only the manual tag, PyPI upload, and GitHub Release. The committed fixture's 8.53% K1 result validates the research gate machinery but no longer blocks this bounded product gate.
 
 **Not the biggest lever available.** Model and scaffold choice spans >100× in cost at comparable accuracy on public leaderboards. Laconic is orthogonal to it and will not pretend otherwise.
 

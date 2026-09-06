@@ -1,6 +1,6 @@
 # Laconic – Compress what a coding agent carries, not what it says.
 
-> **Status: OMP runtime candidate qualified on `main`, published package v0.8.0.** The repository contains the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open boundary, and operator CLI. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). The published v0.8.0 package still does not contain the integration; release awaits the version bump and publication step.
+> **Status: runtime beta prepared as v0.9.0; published package is still v0.8.0.** The repository contains the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open boundary, and operator CLI. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). This checkout is version 0.9.0; publication to PyPI and the GitHub Release are manual and pending.
 
 Laconic is a private, local runtime codec for existing coding agents. It reduces eligible model-visible `read`, `bash`, `grep`, and `glob` observations while preserving exact, on-demand access to omitted content. It integrates with OMP rather than replacing it.
 
@@ -52,7 +52,7 @@ The committed fixture reports K1 net savings of 8.53% against its pre-registered
 1. ~~Build a transport-neutral session engine with namespaced exact recovery and strict-smaller decisions.~~
 2. ~~Package an ownership-safe OMP extension with a 250 ms deadline, fail-open behavior, expansion, and operator controls.~~
 3. ~~Qualify the built package through at least 10 completed real OMP sessions across 3 repositories and at least 100 eligible observations.~~
-4. Release the opt-in OMP beta: bump the version, ship a wheel containing the post-campaign operator fix, and publish.
+4. Publish the opt-in OMP beta: version 0.9.0 is prepared and awaits the manual tag, PyPI upload, and GitHub Release.
 5. Design the Claude Code adapter separately after the protocol survives OMP dogfood. MCP, action rewriting, and history compaction remain deferred.
 
 ## License
