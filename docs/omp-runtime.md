@@ -141,4 +141,19 @@ The predeclared qualification campaign completed and its report is committed ver
 - **Repositories were local clones** of three unrelated projects pinned at fixed commits, not live working checkouts.
 - **The observed 35.84% character reduction is descriptive of that workload only.** Read-heavy investigation is the shape the codec handles best; 96 of 137 eligible observations were still passed through unchanged because their envelope would not have been smaller. No minimum savings figure gates the beta, and none is claimed.
 - **Faults were injected deliberately** — absent interpreter, non-executable interpreter, engine killed mid-session, one malformed protocol frame, and one response stalled past the 250 ms deadline. In every case the host returned the original observation and the session completed; measured latency was 1.45 ms at p50 and 18.65 ms at p95.
-- **The qualified wheel predates one fix.** The campaign's crash scenarios exposed a defect in `laconic status` and `laconic purge --older-than`, which could not read a ledger whose writer had been killed. That fix landed after the candidate wheel was frozen, so the wheel the beta ships must include it.
+- **The qualified wheel predates one fix.** The campaign's crash scenarios exposed a defect in `laconic status` and `laconic purge --older-than`, which could not read a ledger whose writer had been killed. That fix landed after the candidate wheel was frozen, so the released wheel is not byte-identical to the qualified one — see below.
+
+### Qualified artifact vs released artifact
+
+The campaign qualified wheel SHA-256 `d9c4f4c191915d86a43aee72cca832e940a8ae360e830f7b815f2a814a2aa0b6`, built from the qualification protocol's own commit. Version 0.9.0 ships one change to packaged code on top of it:
+
+```text
+src/laconic/runtime/operator.py | 31 +++++++++++++++++++++++++------
+1 file changed, 25 insertions(+), 6 deletions(-)
+```
+
+That is the entire difference: a `_query_only` helper, two call sites switched to it, and one import. No other file under `src/` changed, so the codec, ledger, session engine, JSONL protocol, and OMP extension asset are bit-for-bit the code the campaign qualified.
+
+The campaign was deliberately not re-run for it, because no acceptance criterion is reachable from that file. `operator.py` is read-only reporting — `status` and `purge --older-than`. It runs after a session, never inside one, and cannot influence a compression decision, an envelope, a recovery, or a latency sample; those come from `runtime/engine.py`, `ledger.py`, `codec/`, and the extension. Re-running would have reproduced identical safety counters.
+
+The changed lines were instead verified against the campaign's own damaged ledgers: after the fix, `status` read the post-crash store correctly, and both purge forms previewed and then applied against real retained ledgers, deleting only their intended targets. A future correction touching the engine, ledger, codec, protocol, or extension asset does **not** qualify for this treatment and requires re-running every affected scenario.

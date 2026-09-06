@@ -4,7 +4,7 @@
 
 Laconic sits at the **tool-result boundary** of an existing coding agent. The first runtime product is an explicitly installed OMP extension backed by one session-owned Python engine. The host adapter owns the session-scoped engine process lifecycle and result mutation; the engine owns encoding, recovery, decisions, and local storage.
 
-The published version 0.8.0 has no live codec integration. The repository now contains the unreleased OMP runtime candidate shown below; M18 qualification and human sign-off still block release.
+The published version 0.8.0 has no live codec integration. This checkout is version 0.9.0 and contains the OMP runtime shown below; M18 qualification has passed and its human review gate is signed, so only the manual tag, PyPI upload, and GitHub Release remain.
 
 ```mermaid
 graph TB

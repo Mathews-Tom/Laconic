@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-06
+
 ### Added
 
 - Added the transport-neutral runtime session engine and bounded `python -m laconic.runtime` JSONL service. It stores raw observations in owner-only, path-contained per-session ledgers before emitting a strictly smaller namespaced envelope, supports exact full/span recovery after reopen, and records content-free decisions and latency metrics. The OMP adapter below consumes this canonical engine rather than duplicating codec policy.
@@ -109,7 +111,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Initial packaging, lint, strict typing, test, and CI surface, with an importable `laconic` package and a `laconic` console script exposing `--version` and `--help`.
 
-[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.5.0...v0.7.0
 [0.5.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.4.0...v0.5.0
