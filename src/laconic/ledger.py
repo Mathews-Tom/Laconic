@@ -59,65 +59,76 @@ SCHEMA_VERSION = 3
 #: ``applied = accepted`` would claim a cache write happened, and a real
 #: bill was paid, when nothing was rewritten — exactly the flattering
 #: accounting ``docs/system-design.md`` §9.4 exists to prevent.
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS observations (
-    session_id    TEXT    NOT NULL,
-    handle        TEXT    NOT NULL,
-    kind          TEXT    NOT NULL,
-    subject       TEXT    NOT NULL,
-    content_sha   TEXT    NOT NULL,
-    raw           BLOB    NOT NULL,
-    encoded       TEXT    NOT NULL,
-    raw_chars     INTEGER NOT NULL,
-    encoded_chars INTEGER NOT NULL,
-    turn          INTEGER NOT NULL,
-    resident      INTEGER NOT NULL DEFAULT 1,
-    created_at    REAL    NOT NULL,
-    PRIMARY KEY (session_id, handle)
-);
 
-CREATE INDEX IF NOT EXISTS obs_dedup ON observations (session_id, subject, content_sha);
-CREATE INDEX IF NOT EXISTS obs_resident ON observations (session_id, resident, turn);
+#: One statement per element rather than a script: `_init_schema` applies them
+#: inside an explicit transaction, and `sqlite3.Connection.executescript`
+#: cannot run there — it commits first, then leaves each statement standing
+#: alone. Splitting a single blob on ``;`` would work today but breaks on the
+#: first statement carrying an inner semicolon (a trigger body, a string
+#: literal, a comment), and would break it at ledger-open time.
+SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS observations (
+        session_id    TEXT    NOT NULL,
+        handle        TEXT    NOT NULL,
+        kind          TEXT    NOT NULL,
+        subject       TEXT    NOT NULL,
+        content_sha   TEXT    NOT NULL,
+        raw           BLOB    NOT NULL,
+        encoded       TEXT    NOT NULL,
+        raw_chars     INTEGER NOT NULL,
+        encoded_chars INTEGER NOT NULL,
+        turn          INTEGER NOT NULL,
+        resident      INTEGER NOT NULL DEFAULT 1,
+        created_at    REAL    NOT NULL,
+        PRIMARY KEY (session_id, handle)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS obs_dedup ON observations (session_id, subject, content_sha)",
+    "CREATE INDEX IF NOT EXISTS obs_resident ON observations (session_id, resident, turn)",
+    """
+    CREATE TABLE IF NOT EXISTS compactions (
+        session_id      TEXT    NOT NULL,
+        turn            INTEGER NOT NULL,
+        prefix_before   INTEGER NOT NULL,
+        prefix_after    INTEGER NOT NULL,
+        breakeven_turns REAL    NOT NULL,
+        projected_turns INTEGER,
+        accepted        INTEGER NOT NULL DEFAULT 0,
+        applied         INTEGER NOT NULL DEFAULT 0,
+        reason          TEXT    NOT NULL,
+        PRIMARY KEY (session_id, turn)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_decisions (
+        session_id    TEXT    NOT NULL,
+        sequence      INTEGER NOT NULL,
+        request_id    TEXT    NOT NULL,
+        tool_name     TEXT    NOT NULL,
+        outcome       TEXT    NOT NULL,
+        reason        TEXT    NOT NULL,
+        candidate_reference TEXT,
+        raw_chars     INTEGER NOT NULL,
+        visible_chars INTEGER NOT NULL,
+        latency_ms    REAL    NOT NULL,
+        created_at    REAL    NOT NULL,
+        PRIMARY KEY (session_id, sequence),
+        UNIQUE (session_id, request_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_expansions (
+        session_id TEXT    NOT NULL,
+        request_id TEXT    NOT NULL,
+        reference  TEXT    NOT NULL,
+        span       INTEGER NOT NULL,
+        created_at REAL    NOT NULL,
+        PRIMARY KEY (session_id, request_id)
+    )
+    """,
+)
 
-CREATE TABLE IF NOT EXISTS compactions (
-    session_id      TEXT    NOT NULL,
-    turn            INTEGER NOT NULL,
-    prefix_before   INTEGER NOT NULL,
-    prefix_after    INTEGER NOT NULL,
-    breakeven_turns REAL    NOT NULL,
-    projected_turns INTEGER,
-    accepted        INTEGER NOT NULL DEFAULT 0,
-    applied         INTEGER NOT NULL DEFAULT 0,
-    reason          TEXT    NOT NULL,
-    PRIMARY KEY (session_id, turn)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_decisions (
-    session_id    TEXT    NOT NULL,
-    sequence      INTEGER NOT NULL,
-    request_id    TEXT    NOT NULL,
-    tool_name     TEXT    NOT NULL,
-    outcome       TEXT    NOT NULL,
-    reason        TEXT    NOT NULL,
-    candidate_reference TEXT,
-    raw_chars     INTEGER NOT NULL,
-    visible_chars INTEGER NOT NULL,
-    latency_ms    REAL    NOT NULL,
-    created_at    REAL    NOT NULL,
-    PRIMARY KEY (session_id, sequence),
-    UNIQUE (session_id, request_id)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_expansions (
-    session_id TEXT    NOT NULL,
-    request_id TEXT    NOT NULL,
-    reference  TEXT    NOT NULL,
-    span       INTEGER NOT NULL,
-    created_at REAL    NOT NULL,
-    PRIMARY KEY (session_id, request_id)
-);
-
-"""
 
 #: Columns a version-1 database's ``compactions`` table predates. Added with
 #: ``ALTER TABLE`` rather than by recreating the table, so existing rows —
@@ -336,30 +347,44 @@ class Ledger:
             raise
 
     def _init_schema(self) -> None:
+        """Bring this database to :data:`SCHEMA_VERSION` atomically.
+
+        Every statement — the table shape, any version-1 migration, and the
+        ``user_version`` stamp that claims the shape exists — runs inside one
+        explicit transaction, so a process killed partway through leaves
+        either nothing or a complete ledger.
+
+        This matters because initialization is the one moment a ledger can be
+        killed mid-write: an OMP host that gives up on a slow cold start
+        terminates the engine, and a half-built ledger (``observations``
+        present, ``runtime_decisions`` missing) survives on disk and breaks
+        every later reader, including the operator commands that would have
+        cleaned it up. ``executescript`` cannot provide this: it commits any
+        pending transaction before it starts and then leaves each statement
+        standing alone.
+        """
         (version,) = self._db.execute("PRAGMA user_version").fetchone()
         if version > SCHEMA_VERSION:
             raise SchemaVersionError(
                 f"{self._path} was written by ledger schema {version}, "
                 f"and this build understands {SCHEMA_VERSION}"
             )
-        # ``executescript`` commits any pending transaction and DDL opens
-        # none, so there is no transaction to wrap here. A fresh (version 0)
-        # database gets the current, already-final table shape from this
-        # alone; only a real version-1 database predates it.
-        self._db.executescript(SCHEMA)
-        if version == 1:
-            self._migrate_v1_compactions()
-        self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-
-    def _migrate_v1_compactions(self) -> None:
-        """Add the columns a version-1 ``compactions`` table predates.
-
-        Existing rows are preserved: ``ALTER TABLE ADD COLUMN`` extends every
-        row with the column's default rather than rewriting the table.
-        """
-        with self._db:
-            for statement in _V2_COMPACTION_COLUMNS:
+        # Python's sqlite3 opens an implicit transaction only before DML, so
+        # DDL needs an explicit BEGIN to be covered by one at all.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_STATEMENTS:
                 self._db.execute(statement)
+            if version == 1:
+                # ALTER TABLE ADD COLUMN extends every existing row with the
+                # column's default rather than rewriting the table.
+                for statement in _V2_COMPACTION_COLUMNS:
+                    self._db.execute(statement)
+            self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        except BaseException:
+            self._db.rollback()
+            raise
+        self._db.commit()
 
     def _recover_counters(self) -> dict[ObservationKind, int]:
         """Resume handle numbering from what this session already stored.

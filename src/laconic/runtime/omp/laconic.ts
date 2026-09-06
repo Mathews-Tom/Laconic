@@ -17,6 +17,15 @@ export const LACONIC_ENTRYPOINT = ["-I", "-m", "laconic.runtime"] as const;
 export const LACONIC_DATA_DIRECTORY = "__LACONIC_DATA_DIRECTORY__";
 export const LACONIC_PROTOCOL_VERSION = 1;
 export const LACONIC_REQUEST_TIMEOUT_MS = 250;
+// Starting the engine is not a steady-state request. It pays interpreter
+// startup, module imports, and first-run schema creation, which on a cold
+// filesystem lands within ~15% of the 250 ms encode budget and intermittently
+// overruns it. Judging it by that budget made the host terminate the engine
+// mid-schema-creation, leaving a half-built ledger that broke every later
+// reader, so initialization gets its own generous deadline. Steady-state
+// encode latency is unaffected: it keeps the 250 ms boundary the beta gate
+// measured at 1.45 ms p50 and 18.65 ms p95.
+export const LACONIC_START_TIMEOUT_MS = 10_000;
 export const LACONIC_BREAKER_FAILURES = 3;
 
 export type JsonValue =
@@ -54,11 +63,16 @@ export interface RuntimeStartOptions {
   dataDirectory: string;
   policy: RuntimePolicy;
   requestTimeoutMs: number;
+  startTimeoutMs: number;
 }
 
 export interface RuntimeProcess {
   readonly nextSequence?: number;
-  request(operation: RuntimeOperation, fields?: JsonObject): Promise<JsonObject>;
+  request(
+    operation: RuntimeOperation,
+    fields?: JsonObject,
+    timeoutMs?: number,
+  ): Promise<JsonObject>;
   shutdown(): Promise<void>;
 }
 
@@ -67,6 +81,7 @@ export interface RuntimeSupervisorOptions {
   dataDirectory?: string;
   policy?: RuntimePolicy;
   requestTimeoutMs?: number;
+  startTimeoutMs?: number;
   createProcess?: (options: RuntimeStartOptions) => Promise<RuntimeProcess>;
 }
 
@@ -261,12 +276,16 @@ export class JsonlRuntimeProcess implements RuntimeProcess {
       options.requestTimeoutMs,
     );
     try {
-      const result = await runtime.request("initialize", {
-        session_id: options.sessionId,
-        working_directory: options.workingDirectory,
-        data_directory: options.dataDirectory,
-        policy: { ...options.policy },
-      });
+      const result = await runtime.request(
+        "initialize",
+        {
+          session_id: options.sessionId,
+          working_directory: options.workingDirectory,
+          data_directory: options.dataDirectory,
+          policy: { ...options.policy },
+        },
+        options.startTimeoutMs,
+      );
       if (
         !hasExactKeys(result, ["session_id", "next_sequence"]) ||
         result.session_id !== options.sessionId
@@ -281,7 +300,11 @@ export class JsonlRuntimeProcess implements RuntimeProcess {
     }
   }
 
-  request(operation: RuntimeOperation, fields: JsonObject = {}): Promise<JsonObject> {
+  request(
+    operation: RuntimeOperation,
+    fields: JsonObject = {},
+    timeoutMs: number = this.requestTimeoutMs,
+  ): Promise<JsonObject> {
     if (this.closed) {
       return Promise.reject(new RuntimeProtocolError("runtime_unavailable", "runtime is not available"));
     }
@@ -301,7 +324,7 @@ export class JsonlRuntimeProcess implements RuntimeProcess {
         this.pending.delete(requestId);
         this.rememberExpired(requestId);
         pending.reject(new RuntimeProtocolError("timeout", "runtime request exceeded its deadline"));
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(requestId, { operation, resolve, reject, timer });
       this.writeChain = this.writeChain.then(async () => {
         if (this.closed) {
@@ -529,6 +552,7 @@ export class RuntimeSupervisor {
       dataDirectory: options.dataDirectory ?? LACONIC_DATA_DIRECTORY,
       policy: options.policy ?? DEFAULT_POLICY,
       requestTimeoutMs: options.requestTimeoutMs ?? LACONIC_REQUEST_TIMEOUT_MS,
+      startTimeoutMs: options.startTimeoutMs ?? LACONIC_START_TIMEOUT_MS,
       createProcess: options.createProcess ?? JsonlRuntimeProcess.start,
     };
   }
@@ -540,6 +564,18 @@ export class RuntimeSupervisor {
       consecutiveFailures: this.consecutiveFailures,
       breakerOpen: this.breakerOpen,
     };
+  }
+
+  private binding: Promise<void> = Promise.resolve();
+
+  /** The in-flight bind. The host never awaits one; a caller may. */
+  get pendingBind(): Promise<void> {
+    return this.binding;
+  }
+
+  /** Start binding without making the caller wait for the engine. */
+  bindDetached(ctx: ExtensionContext): void {
+    this.binding = this.bind(ctx);
   }
 
   async bind(ctx: ExtensionContext): Promise<void> {
@@ -557,6 +593,7 @@ export class RuntimeSupervisor {
         dataDirectory: this.options.dataDirectory,
         policy: this.options.policy,
         requestTimeoutMs: this.options.requestTimeoutMs,
+        startTimeoutMs: this.options.startTimeoutMs,
       });
       this.runtime = runtime;
       this.nextSequence = runtime.nextSequence ?? 1;
@@ -575,7 +612,14 @@ export class RuntimeSupervisor {
       throw new RuntimeProtocolError("circuit_open", "Laconic runtime circuit breaker is open");
     }
     if (this.runtime === null) {
-      this.recordFailure();
+      // A start still in flight is not a failure. The host awaits its session
+      // events, so `bind` is dispatched without being awaited and the first
+      // observations of a session can arrive before the engine is ready;
+      // counting those toward the breaker would open it for the whole session
+      // over nothing but a slow cold start.
+      if (this.state !== "starting") {
+        this.recordFailure();
+      }
       throw new RuntimeProtocolError("runtime_unavailable", "Laconic runtime is unavailable");
     }
     try {
@@ -664,8 +708,13 @@ export function attachRuntimeLifecycle(
   options: RuntimeSupervisorOptions = {},
 ): RuntimeSupervisor {
   const supervisor = new RuntimeSupervisor(options);
-  pi.on("session_start", async (_event, ctx) => supervisor.bind(ctx));
-  pi.on("session_switch", async (_event, ctx) => supervisor.bind(ctx));
+  // Dispatched, not awaited: the host awaits its session-event handlers, so
+  // awaiting a cold start here would stall the user's session for as long as
+  // the engine takes to come up — and for the full start deadline if it never
+  // does. Observations that arrive before the engine is ready pass through
+  // unchanged, which is the same fail-open path every other fault takes.
+  pi.on("session_start", (_event, ctx) => supervisor.bindDetached(ctx));
+  pi.on("session_switch", (_event, ctx) => supervisor.bindDetached(ctx));
   pi.on("session_branch", () => supervisor.preserveSession());
   pi.on("session_tree", () => supervisor.preserveSession());
   pi.on("session_shutdown", async () => supervisor.shutdown());

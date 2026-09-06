@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a first-run failure found by dogfooding a clean install. Engine startup was judged by the same 250 ms deadline as a steady-state encode, but a cold start pays interpreter startup, module imports, and schema creation — measured at 199-215 ms with warm caches, so it intermittently overran. The host then terminated the engine mid-schema-creation, and the half-built ledger it left behind (`observations` present, the runtime tables missing) broke every later reader. Initialization now has its own generous deadline; per-observation encode keeps the 250 ms boundary unchanged.
+- Fixed ledger schema creation being non-atomic. The whole shape, any migration, and the `user_version` stamp that claims the shape exists now apply in one transaction, so an initialize killed partway leaves either nothing or a complete ledger.
+- Fixed `laconic status` and `laconic purge --older-than` aborting on an unreadable ledger. One damaged file used to fail both commands for the entire store, with no supported way to remove it — its filename is a hash of the session id, so `--session` could not reach it. `status` now reports a `damaged_ledgers` count and keeps aggregating the healthy sessions, and retention can purge a damaged ledger by falling back to its file mtime.
+
 ## [0.9.0] — 2026-09-06
 
 ### Added
