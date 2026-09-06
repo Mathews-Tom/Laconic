@@ -2,14 +2,14 @@
 
 The OMP runtime is Laconic's first product integration. It is opt-in and local: one native OMP extension intercepts eligible tool results, delegates encoding and recovery to one session-owned Python process, and returns a compact envelope only when that complete envelope is strictly smaller than the original text.
 
-The runtime candidate is present on `main` for M18 qualification and is not part of the published `v0.8.0` package. Install from a source checkout until a later release passes the runtime beta gate.
+The runtime ships in the published package from `v0.9.0` onward. Install it from PyPI; a source checkout is only needed to run an unreleased change.
 
 ## Install
 
 From the project where OMP should load Laconic:
 
 ```text
-uv tool install .
+uv tool install laconic
 laconic install omp --dry-run
 laconic install omp
 ```

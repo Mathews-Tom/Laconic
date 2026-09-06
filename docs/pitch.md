@@ -54,7 +54,7 @@ The 44.6% was a correct measurement of the wrong channel. We published the corre
 
 ## What the core and runtime candidate do
 
-Version 0.8.0 contains the deterministic codec and recovery ledger but no live codec integration. The repository's unreleased candidate adds the opt-in OMP extension, session-owned Python engine, exact recovery, fail-open boundary, and operator controls.
+Version 0.9.1 is published and contains the deterministic codec, the recovery ledger, and the opt-in OMP extension: a session-owned Python engine, exact recovery, a fail-open boundary, and operator controls. Versions up to 0.8.0 had no live codec integration.
 
 **Scope what enters the context.** A `Read` averages 6,147 characters, and the distribution is brutal: the largest 7% of reads carry 38.7% of all read volume; the top 10% carry 47.3%. For supported successful textual results, the runtime returns a smaller recovery-bearing envelope only when the complete replacement is shorter than the raw result:
 
@@ -80,7 +80,7 @@ Version 0.8.0 contains the deterministic codec and recovery ledger but no live c
 
 **Not a general savings result.** The beta may report observed raw and visible character counts for its own sessions. General token, cost, cache, and behavior claims require representative paired evidence, model-specific accounting, induced-work measurement, and behavior evaluation.
 
-**Not published as a runtime yet.** The published package is version 0.8.0; this checkout is 0.9.0. The OMP runtime candidate has passed real OMP qualification and its human sign-off over exact recovery, fail-open behavior, a 250 ms deadline, private local storage, operator control, and built-package behavior (`docs/runtime-beta-report.md`), and awaits only the manual tag, PyPI upload, and GitHub Release. The committed fixture's 8.53% K1 result validates the research gate machinery but no longer blocks this bounded product gate.
+**Published as a beta, not as a proven economics result.** The published package is version 0.9.1. The OMP runtime has passed real OMP qualification and its human sign-off over exact recovery, fail-open behavior, a 250 ms deadline, private local storage, operator control, and built-package behavior (`docs/runtime-beta-report.md`). Installation is explicit and opt-in. The committed fixture's 8.53% K1 result validates the research gate machinery but no longer blocks this bounded product gate, and it remains the only bound on a general savings claim.
 
 **Not the biggest lever available.** Model and scaffold choice spans >100× in cost at comparable accuracy on public leaderboards. Laconic is orthogonal to it and will not pretend otherwise.
 
