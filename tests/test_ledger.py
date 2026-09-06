@@ -766,13 +766,13 @@ def test_a_killed_initialize_leaves_no_half_built_ledger(
     runtime tables missing — the shape that broke every later reader,
     including the operator commands that would have removed it."""
     db_path = tmp_path / "ledger.db"
-    statements = laconic.ledger._SCHEMA_STATEMENTS
+    statements = laconic.ledger.SCHEMA_STATEMENTS
     assert len(statements) > 1, "the test needs more than one statement to die between"
 
     # Fail after the first table exists but before the rest do.
     monkeypatch.setattr(
         laconic.ledger,
-        "_SCHEMA_STATEMENTS",
+        "SCHEMA_STATEMENTS",
         (*statements[:1], "SELECT raise_after_first_statement()"),
     )
     with pytest.raises(sqlite3.OperationalError):

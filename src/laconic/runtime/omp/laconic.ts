@@ -566,6 +566,18 @@ export class RuntimeSupervisor {
     };
   }
 
+  private binding: Promise<void> = Promise.resolve();
+
+  /** The in-flight bind. The host never awaits one; a caller may. */
+  get pendingBind(): Promise<void> {
+    return this.binding;
+  }
+
+  /** Start binding without making the caller wait for the engine. */
+  bindDetached(ctx: ExtensionContext): void {
+    this.binding = this.bind(ctx);
+  }
+
   async bind(ctx: ExtensionContext): Promise<void> {
     await this.stopRuntime();
     this.sessionId = ctx.sessionManager.getSessionId();
@@ -600,7 +612,14 @@ export class RuntimeSupervisor {
       throw new RuntimeProtocolError("circuit_open", "Laconic runtime circuit breaker is open");
     }
     if (this.runtime === null) {
-      this.recordFailure();
+      // A start still in flight is not a failure. The host awaits its session
+      // events, so `bind` is dispatched without being awaited and the first
+      // observations of a session can arrive before the engine is ready;
+      // counting those toward the breaker would open it for the whole session
+      // over nothing but a slow cold start.
+      if (this.state !== "starting") {
+        this.recordFailure();
+      }
       throw new RuntimeProtocolError("runtime_unavailable", "Laconic runtime is unavailable");
     }
     try {
@@ -689,8 +708,13 @@ export function attachRuntimeLifecycle(
   options: RuntimeSupervisorOptions = {},
 ): RuntimeSupervisor {
   const supervisor = new RuntimeSupervisor(options);
-  pi.on("session_start", async (_event, ctx) => supervisor.bind(ctx));
-  pi.on("session_switch", async (_event, ctx) => supervisor.bind(ctx));
+  // Dispatched, not awaited: the host awaits its session-event handlers, so
+  // awaiting a cold start here would stall the user's session for as long as
+  // the engine takes to come up — and for the full start deadline if it never
+  // does. Observations that arrive before the engine is ready pass through
+  // unchanged, which is the same fail-open path every other fault takes.
+  pi.on("session_start", (_event, ctx) => supervisor.bindDetached(ctx));
+  pi.on("session_switch", (_event, ctx) => supervisor.bindDetached(ctx));
   pi.on("session_branch", () => supervisor.preserveSession());
   pi.on("session_tree", () => supervisor.preserveSession());
   pi.on("session_shutdown", async () => supervisor.shutdown());

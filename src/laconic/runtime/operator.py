@@ -136,8 +136,21 @@ def _query_only(path: Path) -> sqlite3.Connection:
     return database
 
 
+def _is_missing_schema(error: sqlite3.Error) -> bool:
+    """Is this the specific failure a killed initialize leaves behind?
+
+    Only a missing table counts. ``sqlite3.DatabaseError`` also subsumes
+    "database is locked" (a live session mid-write), "disk I/O error", and
+    "database disk image is malformed" — a ledger that may still hold real
+    evidence. Treating those as damaged would mislabel a working session and,
+    worse, let retention delete a corrupt-but-recoverable ledger instead of
+    surfacing the corruption to the operator.
+    """
+    return isinstance(error, sqlite3.OperationalError) and "no such table" in str(error)
+
+
 def _read_metrics(path: Path) -> tuple[int, int, int, int, int, int, int] | None:
-    """Aggregate one ledger's counters, or ``None`` if it is unreadable.
+    """Aggregate one ledger's counters, or ``None`` if its schema is missing.
 
     A ledger whose writer was killed before it finished creating its schema
     has tables missing rather than merely a hot journal, so a query raises
@@ -146,12 +159,14 @@ def _read_metrics(path: Path) -> tuple[int, int, int, int, int, int, int] | None
     in the store, with no supported way to remove the damaged file. Reporting
     it as damaged and continuing keeps both surfaces working, and letting
     :func:`_last_activity` fall back to the file's mtime lets retention purge
-    it.
+    it. Every other failure still propagates.
     """
     try:
         return _read_metrics_strict(path)
-    except sqlite3.DatabaseError:
-        return None
+    except sqlite3.Error as error:
+        if _is_missing_schema(error):
+            return None
+        raise
 
 
 def _read_metrics_strict(path: Path) -> tuple[int, int, int, int, int, int, int]:
@@ -241,10 +256,13 @@ def preview_purge_session(session_id: str, data_dir: Path | None = None) -> Purg
 def _last_activity(path: Path) -> float:
     """Return this ledger's last recorded activity, or its file mtime.
 
-    An unreadable ledger falls back to mtime rather than raising, so
-    retention can purge a file a killed initialize left half-built. That is
+    A ledger whose schema is missing falls back to mtime rather than raising,
+    so retention can purge a file a killed initialize left half-built. That is
     the only supported route to removing one: its filename is a hash of the
     session id, which an operator cannot reverse to pass to `--session`.
+
+    Any other failure propagates, so a corrupt or locked ledger aborts the
+    plan and reaches the operator instead of being quietly deleted.
     """
     try:
         with closing(_query_only(path)) as database:
@@ -254,7 +272,9 @@ def _last_activity(path: Path) -> float:
                 "SELECT created_at FROM runtime_decisions UNION ALL "
                 "SELECT created_at FROM runtime_expansions)"
             ).fetchone()
-    except sqlite3.DatabaseError:
+    except sqlite3.Error as error:
+        if not _is_missing_schema(error):
+            raise
         return path.stat().st_mtime
     if row is None or row[0] is None:
         return path.stat().st_mtime

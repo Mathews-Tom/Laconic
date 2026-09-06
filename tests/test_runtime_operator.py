@@ -114,6 +114,23 @@ def test_retention_can_purge_a_half_built_ledger(tmp_path: Path) -> None:
     assert runtime_storage_status(root).damaged_ledgers == 0
 
 
+def test_real_corruption_is_surfaced_rather_than_counted_as_damaged(tmp_path: Path) -> None:
+    """Only a missing schema means "a killed initialize left this". A ledger
+    that is corrupt, locked, or unreadable for any other reason may still hold
+    real evidence, so it must reach the operator instead of being quietly
+    counted and then deleted by retention."""
+    root = tmp_path / "data"
+    RuntimeStorage(root)
+    sessions = resolve_data_dir(root) / "sessions"
+    corrupt = sessions / f"{'c' * 64}.sqlite3"
+    corrupt.write_bytes(b"SQLite format 3\x00" + b"\xff" * 4096)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        runtime_storage_status(root)
+    with pytest.raises(sqlite3.DatabaseError):
+        preview_purge_older_than(60, root, now=10_000.0)
+
+
 def test_status_and_retention_survive_a_ledger_whose_writer_was_killed(
     tmp_path: Path,
 ) -> None:

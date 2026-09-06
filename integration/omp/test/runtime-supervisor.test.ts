@@ -250,6 +250,7 @@ describe("OMP runtime lifecycle", () => {
     });
 
     await handlers.session_start?.({}, fakeContext("session-a", "/project/a"));
+    await supervisor.pendingBind;
     expect(supervisor.snapshot()).toEqual({
       state: "ready",
       sessionId: "session-a",
@@ -265,6 +266,7 @@ describe("OMP runtime lifecycle", () => {
     expect(starts).toHaveLength(1);
 
     await handlers.session_switch?.({}, fakeContext("session-b", "/project/b"));
+    await supervisor.pendingBind;
     expect(processes[0]?.shutdownCalls).toBe(1);
     expect(starts[1]?.sessionId).toBe("session-b");
     expect(supervisor.snapshot().sessionId).toBe("session-b");
@@ -272,6 +274,42 @@ describe("OMP runtime lifecycle", () => {
     await handlers.session_shutdown?.();
     expect(processes[1]?.shutdownCalls).toBe(1);
     expect(supervisor.snapshot().state).toBe("stopped");
+  });
+
+  test("a slow cold start does not delay the host's session event", async () => {
+    // The host awaits its session-event handlers, so binding must not be
+    // awaited: a slow — or never-answering — engine would otherwise stall the
+    // user's session start for the whole start deadline.
+    const handlers: CapturedHandlers = {};
+    let released: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      released = resolve;
+    });
+    const supervisor = attachRuntimeLifecycle(captureApi(handlers), {
+      createProcess: async () => {
+        await blocked;
+        return new FakeRuntimeProcess();
+      },
+    });
+
+    // The handler returns while createProcess is still blocked; the state it
+    // leaves behind is the proof, with no clock involved.
+    await handlers.session_start?.({}, fakeContext("session-slow", "/project"));
+    expect(supervisor.snapshot().state).toBe("starting");
+
+    // An observation arriving before the engine is ready passes through and
+    // must not be charged to the breaker.
+    await expect(supervisor.invoke("expand", { reference: "s/F1" })).rejects.toThrow(
+      "runtime is unavailable",
+    );
+    expect(supervisor.snapshot()).toMatchObject({
+      consecutiveFailures: 0,
+      breakerOpen: false,
+    });
+
+    released();
+    await supervisor.pendingBind;
+    expect(supervisor.snapshot().state).toBe("ready");
   });
 
   test("third consecutive engine failure opens the session breaker", async () => {
@@ -597,7 +635,10 @@ describe("JSONL runtime transport", () => {
     options.requestTimeoutMs = 1;
     try {
       const runtime = await JsonlRuntimeProcess.start(options);
-      await runtime.shutdown();
+      // That poison budget governs teardown too, and a graceful shutdown
+      // round-trip cannot meet it. Only the start deadline is under test, so
+      // teardown must not decide the result.
+      await runtime.shutdown().catch(() => {});
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

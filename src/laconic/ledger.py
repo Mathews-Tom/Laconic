@@ -59,72 +59,74 @@ SCHEMA_VERSION = 3
 #: ``applied = accepted`` would claim a cache write happened, and a real
 #: bill was paid, when nothing was rewritten — exactly the flattering
 #: accounting ``docs/system-design.md`` §9.4 exists to prevent.
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS observations (
-    session_id    TEXT    NOT NULL,
-    handle        TEXT    NOT NULL,
-    kind          TEXT    NOT NULL,
-    subject       TEXT    NOT NULL,
-    content_sha   TEXT    NOT NULL,
-    raw           BLOB    NOT NULL,
-    encoded       TEXT    NOT NULL,
-    raw_chars     INTEGER NOT NULL,
-    encoded_chars INTEGER NOT NULL,
-    turn          INTEGER NOT NULL,
-    resident      INTEGER NOT NULL DEFAULT 1,
-    created_at    REAL    NOT NULL,
-    PRIMARY KEY (session_id, handle)
-);
 
-CREATE INDEX IF NOT EXISTS obs_dedup ON observations (session_id, subject, content_sha);
-CREATE INDEX IF NOT EXISTS obs_resident ON observations (session_id, resident, turn);
-
-CREATE TABLE IF NOT EXISTS compactions (
-    session_id      TEXT    NOT NULL,
-    turn            INTEGER NOT NULL,
-    prefix_before   INTEGER NOT NULL,
-    prefix_after    INTEGER NOT NULL,
-    breakeven_turns REAL    NOT NULL,
-    projected_turns INTEGER,
-    accepted        INTEGER NOT NULL DEFAULT 0,
-    applied         INTEGER NOT NULL DEFAULT 0,
-    reason          TEXT    NOT NULL,
-    PRIMARY KEY (session_id, turn)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_decisions (
-    session_id    TEXT    NOT NULL,
-    sequence      INTEGER NOT NULL,
-    request_id    TEXT    NOT NULL,
-    tool_name     TEXT    NOT NULL,
-    outcome       TEXT    NOT NULL,
-    reason        TEXT    NOT NULL,
-    candidate_reference TEXT,
-    raw_chars     INTEGER NOT NULL,
-    visible_chars INTEGER NOT NULL,
-    latency_ms    REAL    NOT NULL,
-    created_at    REAL    NOT NULL,
-    PRIMARY KEY (session_id, sequence),
-    UNIQUE (session_id, request_id)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_expansions (
-    session_id TEXT    NOT NULL,
-    request_id TEXT    NOT NULL,
-    reference  TEXT    NOT NULL,
-    span       INTEGER NOT NULL,
-    created_at REAL    NOT NULL,
-    PRIMARY KEY (session_id, request_id)
-);
-
-"""
-
-#: :data:`SCHEMA`'s individual statements. `sqlite3.Connection.executescript`
-#: cannot be used inside a transaction — it commits first, then lets every
-#: statement stand alone — so the statements are applied one at a time inside
-#: one explicit transaction instead. See :meth:`Ledger._init_schema`.
-_SCHEMA_STATEMENTS = tuple(
-    statement.strip() for statement in SCHEMA.split(";") if statement.strip()
+#: One statement per element rather than a script: `_init_schema` applies them
+#: inside an explicit transaction, and `sqlite3.Connection.executescript`
+#: cannot run there — it commits first, then leaves each statement standing
+#: alone. Splitting a single blob on ``;`` would work today but breaks on the
+#: first statement carrying an inner semicolon (a trigger body, a string
+#: literal, a comment), and would break it at ledger-open time.
+SCHEMA_STATEMENTS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS observations (
+        session_id    TEXT    NOT NULL,
+        handle        TEXT    NOT NULL,
+        kind          TEXT    NOT NULL,
+        subject       TEXT    NOT NULL,
+        content_sha   TEXT    NOT NULL,
+        raw           BLOB    NOT NULL,
+        encoded       TEXT    NOT NULL,
+        raw_chars     INTEGER NOT NULL,
+        encoded_chars INTEGER NOT NULL,
+        turn          INTEGER NOT NULL,
+        resident      INTEGER NOT NULL DEFAULT 1,
+        created_at    REAL    NOT NULL,
+        PRIMARY KEY (session_id, handle)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS obs_dedup ON observations (session_id, subject, content_sha)",
+    "CREATE INDEX IF NOT EXISTS obs_resident ON observations (session_id, resident, turn)",
+    """
+    CREATE TABLE IF NOT EXISTS compactions (
+        session_id      TEXT    NOT NULL,
+        turn            INTEGER NOT NULL,
+        prefix_before   INTEGER NOT NULL,
+        prefix_after    INTEGER NOT NULL,
+        breakeven_turns REAL    NOT NULL,
+        projected_turns INTEGER,
+        accepted        INTEGER NOT NULL DEFAULT 0,
+        applied         INTEGER NOT NULL DEFAULT 0,
+        reason          TEXT    NOT NULL,
+        PRIMARY KEY (session_id, turn)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_decisions (
+        session_id    TEXT    NOT NULL,
+        sequence      INTEGER NOT NULL,
+        request_id    TEXT    NOT NULL,
+        tool_name     TEXT    NOT NULL,
+        outcome       TEXT    NOT NULL,
+        reason        TEXT    NOT NULL,
+        candidate_reference TEXT,
+        raw_chars     INTEGER NOT NULL,
+        visible_chars INTEGER NOT NULL,
+        latency_ms    REAL    NOT NULL,
+        created_at    REAL    NOT NULL,
+        PRIMARY KEY (session_id, sequence),
+        UNIQUE (session_id, request_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS runtime_expansions (
+        session_id TEXT    NOT NULL,
+        request_id TEXT    NOT NULL,
+        reference  TEXT    NOT NULL,
+        span       INTEGER NOT NULL,
+        created_at REAL    NOT NULL,
+        PRIMARY KEY (session_id, request_id)
+    )
+    """,
 )
 
 
@@ -371,7 +373,7 @@ class Ledger:
         # DDL needs an explicit BEGIN to be covered by one at all.
         self._db.execute("BEGIN IMMEDIATE")
         try:
-            for statement in _SCHEMA_STATEMENTS:
+            for statement in SCHEMA_STATEMENTS:
                 self._db.execute(statement)
             if version == 1:
                 # ALTER TABLE ADD COLUMN extends every existing row with the
