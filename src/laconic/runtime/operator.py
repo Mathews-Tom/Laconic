@@ -8,6 +8,7 @@ import time
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from laconic.runtime.storage import (
     UnsafeStoragePathError,
@@ -83,7 +84,13 @@ def _sessions_directory(root: Path) -> Path:
     return sessions
 
 
-def _owned_ledger_files(root: Path) -> tuple[Path, ...]:
+def owned_ledger_files(root: Path) -> tuple[Path, ...]:
+    """Return every ledger this installation owns, refusing anything odd.
+
+    Public so an offline reader (:mod:`laconic.spend.ledger`) enumerates the
+    store through the same escape and symlink checks the operator surface
+    uses, rather than growing a second, laxer walk of the same directory.
+    """
     sessions = _sessions_directory(root)
     if not sessions.exists():
         return ()
@@ -114,7 +121,7 @@ def _file_bytes(path: Path) -> int:
     return path.stat().st_size
 
 
-def _query_only(path: Path) -> sqlite3.Connection:
+def open_query_only(path: Path) -> sqlite3.Connection:
     """Open one ledger for reading without granting this connection writes.
 
     A ``mode=ro`` URI cannot read a ledger whose writer died mid-transaction:
@@ -126,8 +133,17 @@ def _query_only(path: Path) -> sqlite3.Connection:
 
     An ordinary handle constrained by ``PRAGMA query_only`` recovers the
     journal and still refuses every write from this connection.
+
+    Public for the same reason as :func:`owned_ledger_files`: this fix has
+    exactly one implementation, and an offline reader of the same store
+    must not carry a second copy of it that can regress independently.
     """
-    database = sqlite3.connect(path)
+    # ``mode=rw`` rather than a bare path: a bare path CREATES the database
+    # when it is missing, so a ledger deleted between enumeration and this
+    # call would leave a stray empty file in the store that every later scan
+    # then counts as damaged, forever. ``rw`` still opens read-write, so the
+    # hot-journal rollback above still happens; it just refuses to create.
+    database = sqlite3.connect(f"file:{quote(str(path))}?mode=rw", uri=True)
     try:
         database.execute("PRAGMA query_only = ON")
     except BaseException:
@@ -170,7 +186,7 @@ def _read_metrics(path: Path) -> tuple[int, int, int, int, int, int, int] | None
 
 
 def _read_metrics_strict(path: Path) -> tuple[int, int, int, int, int, int, int]:
-    with closing(_query_only(path)) as database:
+    with closing(open_query_only(path)) as database:
         decisions = database.execute(
             "SELECT count(*), "
             "coalesce(sum(CASE WHEN outcome = 'emitted' THEN 1 ELSE 0 END), 0), "
@@ -200,7 +216,7 @@ def _read_metrics_strict(path: Path) -> tuple[int, int, int, int, int, int, int]
 def runtime_storage_status(data_dir: Path | None = None) -> RuntimeStorageStatus:
     """Aggregate persisted counters without reading raw observation columns."""
     root = _storage_root(data_dir)
-    ledgers = _owned_ledger_files(root)
+    ledgers = owned_ledger_files(root)
     totals = [0] * 7
     storage_bytes = 0
     damaged = 0
@@ -265,7 +281,7 @@ def _last_activity(path: Path) -> float:
     plan and reaches the operator instead of being quietly deleted.
     """
     try:
-        with closing(_query_only(path)) as database:
+        with closing(open_query_only(path)) as database:
             row = database.execute(
                 "SELECT max(created_at) FROM ("
                 "SELECT created_at FROM observations UNION ALL "
@@ -293,7 +309,7 @@ def preview_purge_older_than(
         raise ValueError("older-than duration must be positive")
     root = _storage_root(data_dir)
     cutoff = (time.time() if now is None else now) - older_than_seconds
-    targets = tuple(path for path in _owned_ledger_files(root) if _last_activity(path) < cutoff)
+    targets = tuple(path for path in owned_ledger_files(root) if _last_activity(path) < cutoff)
     return PurgePlan(
         root=root,
         selector=selector or f"older-than={older_than_seconds}s",
