@@ -32,6 +32,7 @@ Start OMP normally. Use `/laconic status|pause|resume` in the active session, `l
 | [`docs/k1-stage-b-manifest-cli.md`](docs/k1-stage-b-manifest-cli.md) | `laconic research k1 stage-b build-manifest` guide |
 | [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md) | The qualification campaign's generated aggregate report, committed verbatim |
 | [`docs/runtime-beta-runbook.md`](docs/runtime-beta-runbook.md) | How that campaign is frozen, run, and reported with `python -m laconic.beta` |
+| [`docs/spend-comparison-design.md`](docs/spend-comparison-design.md) | What a controlled codec-on/off comparison would require. Designed, not implemented, not authorized |
 
 ## Source checkout
 
