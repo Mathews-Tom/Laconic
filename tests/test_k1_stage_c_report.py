@@ -20,6 +20,7 @@ from laconic.k1corpus.stage_c import (
     StageCAudit,
     StageCLedger,
     StageCManifestEntry,
+    audit_model_unresolved_exclusions,
     audit_retailogists_exclusions,
 )
 from laconic.k1corpus.stage_c_report import PROTOCOL_REPORT_FIELDS, generate_stage_c_report
@@ -83,6 +84,8 @@ def test_report_matches_every_protocol_analysis_field_and_aggregates_complete_pa
         "missing_or_partial_sessions": 0,
         "retailogists_excluded_sessions": 1,
         "retailogists_excluded_lineages": 1,
+        "model_unresolved_excluded_sessions": 0,
+        "model_unresolved_excluded_lineages": 0,
     }
     cost_totals = payload["cost_totals"]
     assert cost_totals == {
@@ -146,6 +149,36 @@ def test_retailogists_exclusions_enter_the_content_free_audit(tmp_path: Path) ->
     receipt = chain[0].receipt
     assert receipt["outcome"] == "excluded_retailogists"
     assert receipt["session_id"] == excluded.session_id
+
+
+def test_model_unresolved_exclusion_is_audited_and_reported(tmp_path: Path) -> None:
+    unresolved = StageCManifestEntry(
+        set=ManifestSet.CONFIRMATORY,
+        provider=Provider.OMP,
+        session_id="omp:unresolved",
+        project_lineage_id="lineage:model-unresolved",
+    )
+    manifest = LoadedStageCManifest(
+        entries=(_entry(),),
+        excluded_retailogists=(),
+        excluded_model_unresolved=(unresolved,),
+    )
+    audit_path = tmp_path / "audit.jsonl"
+    audit_model_unresolved_exclusions(manifest, StageCAudit(audit_path))
+
+    chain = read_chain(audit_path)
+    verify_chain(chain)
+    assert chain[0].receipt["outcome"] == "model_unresolved"
+    assert chain[0].receipt["session_id"] == unresolved.session_id
+
+    report = generate_stage_c_report(
+        manifest,
+        selected_set=ManifestSet.CONFIRMATORY,
+        ledger=StageCLedger(tmp_path / "ledger.json"),
+    )
+    assert report.corpus_composition["selected_sessions"] == 1
+    assert report.corpus_composition["model_unresolved_excluded_sessions"] == 1
+    assert report.corpus_composition["model_unresolved_excluded_lineages"] == 1
 
 
 def test_stage_c_cli_wires_fake_batch_results_into_json_protocol_report(

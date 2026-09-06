@@ -92,6 +92,10 @@ def generate_stage_c_report(
         "retailogists_excluded_lineages": len(
             {entry.project_lineage_id for entry in manifest.excluded_retailogists}
         ),
+        "model_unresolved_excluded_sessions": len(manifest.excluded_model_unresolved),
+        "model_unresolved_excluded_lineages": len(
+            {entry.project_lineage_id for entry in manifest.excluded_model_unresolved}
+        ),
     }
     cost_totals = _cost_totals(metrics if complete_paired else ())
     k1 = _k1(metrics, selected_set=selected_set, complete_paired=complete_paired)

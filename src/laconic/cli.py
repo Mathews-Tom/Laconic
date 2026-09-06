@@ -8,6 +8,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -42,7 +43,9 @@ from laconic.k1corpus.stage_c import (
     StageCAudit,
     StageCLedger,
     StageCManifestError,
+    audit_model_unresolved_exclusions,
     audit_retailogists_exclusions,
+    filter_model_eligible_entries,
     load_stage_c_manifest,
     run_resumable_batch,
 )
@@ -1355,6 +1358,12 @@ def _k1_stage_c_run(args: argparse.Namespace) -> int:
         if args.spend_cap <= 0:
             raise ValueError(f"--spend-cap must be positive, got {args.spend_cap}")
         manifest = load_stage_c_manifest(args.manifest, selected_set=selected_set)
+        eligible_entries, unresolved_entries = filter_model_eligible_entries(manifest.entries)
+        manifest = replace(
+            manifest,
+            entries=eligible_entries,
+            excluded_model_unresolved=unresolved_entries,
+        )
     except (OSError, StageCManifestError, ValueError) as error:
         print(f"laconic k1 stage-c run: {error}", file=sys.stderr)
         return EXIT_LIVE_CONFIG_ERROR
@@ -1375,6 +1384,7 @@ def _k1_stage_c_run(args: argparse.Namespace) -> int:
     ledger = StageCLedger(state_dir / "ledger.json")
     audit = StageCAudit(state_dir / "audit.jsonl")
     audit_retailogists_exclusions(manifest, audit)
+    audit_model_unresolved_exclusions(manifest, audit)
     runner = LiveStageCSessionRunner(
         client_factory=client_factory,
         artifact_dir=state_dir / "artifacts",

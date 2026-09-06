@@ -16,6 +16,7 @@ from laconic.k1corpus.stage_c import (
     ResolvedStageCSession,
     StageCManifestEntry,
     StageCManifestError,
+    filter_model_eligible_entries,
     load_stage_c_manifest,
     resolve_original_model,
     run_untracked_batch,
@@ -150,7 +151,75 @@ def test_missing_or_multi_model_baseline_never_reaches_runner(tmp_path: Path) ->
     assert results[0].outcome == "model_unresolved"
     assert runner.calls == []
     with pytest.raises(OriginalModelError, match="claude-sonnet-5, gpt-5.6-terra"):
-        resolve_original_model(baseline)
+        resolve_original_model(baseline, provider=Provider.CLAUDE_CODE)
+
+
+def test_source_model_resolution_uses_only_provider_authoritative_metadata(tmp_path: Path) -> None:
+    codex = tmp_path / "codex.jsonl"
+    codex.write_text(
+        json.dumps({"payload": {"model": "gpt-5.5"}, "unread": {"content": "private"}}) + "\n",
+        encoding="utf-8",
+    )
+    omp = tmp_path / "omp.jsonl"
+    omp.write_text(
+        json.dumps(
+            {
+                "model": "anthropic/claude-sonnet-5",
+                "message": {"model": "claude-sonnet-5", "content": "private"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert resolve_original_model(codex, provider=Provider.CODEX) == "openai-codex/gpt-5.5"
+    assert resolve_original_model(omp, provider=Provider.OMP) == "anthropic/claude-sonnet-5"
+
+
+def test_model_metadata_gate_excludes_ambiguous_source_before_runner(tmp_path: Path) -> None:
+    included = StageCManifestEntry(
+        set=ManifestSet.DESIGN,
+        provider=Provider.CODEX,
+        session_id="codex:included",
+        project_lineage_id="lineage:one",
+    )
+    excluded = StageCManifestEntry(
+        set=ManifestSet.DESIGN,
+        provider=Provider.OMP,
+        session_id="omp:ambiguous",
+        project_lineage_id="lineage:two",
+    )
+    codex = tmp_path / "included.jsonl"
+    codex.write_text(json.dumps({"payload": {"model": "gpt-5.5"}}) + "\n", encoding="utf-8")
+    omp = tmp_path / "ambiguous.jsonl"
+    omp.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "model": "openai-codex/gpt-5.5",
+                        "message": {"model": "gpt-5.5"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "model": "anthropic/claude-sonnet-5",
+                        "message": {"model": "claude-sonnet-5"},
+                    }
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    eligible, unresolved = filter_model_eligible_entries(
+        (included, excluded),
+        resolver=lambda _provider, session_id: codex if session_id == included.session_id else omp,
+    )
+
+    assert eligible == (included,)
+    assert unresolved == (excluded,)
 
 
 def test_loader_rejects_empty_filtered_set(tmp_path: Path) -> None:

@@ -71,6 +71,7 @@ class LoadedStageCManifest:
 
     entries: tuple[StageCManifestEntry, ...]
     excluded_retailogists: tuple[StageCManifestEntry, ...]
+    excluded_model_unresolved: tuple[StageCManifestEntry, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,10 +183,94 @@ def _parse_manifest_entry(row: object, *, index: int) -> StageCManifestEntry:
         ) from error
 
 
-def resolve_original_model(baseline: Path) -> str:
-    """Return the sole usage-backed model in a baseline or refuse to guess."""
-    models = {turn.usage.model for turn in iter_turns(baseline) if turn.usage is not None}
-    models.discard("unknown")
+def filter_model_eligible_entries(
+    entries: Sequence[StageCManifestEntry],
+    *,
+    resolver: Callable[[Provider, str], Path | None] = resolve_session_path,
+) -> tuple[tuple[StageCManifestEntry, ...], tuple[StageCManifestEntry, ...]]:
+    """Keep only entries with one source-authoritative original-model value.
+
+    A baseline that no longer resolves remains eligible so the durable runner
+    can record its distinct ``resolve_failed`` outcome. Missing or ambiguous
+    source metadata is a pre-client exclusion and is never guessed.
+    """
+    eligible: list[StageCManifestEntry] = []
+    unresolved: list[StageCManifestEntry] = []
+    for entry in entries:
+        baseline = resolver(entry.provider, entry.session_id)
+        if baseline is None:
+            eligible.append(entry)
+            continue
+        try:
+            resolve_original_model(baseline, provider=entry.provider)
+        except OriginalModelError:
+            unresolved.append(entry)
+        else:
+            eligible.append(entry)
+    return tuple(eligible), tuple(unresolved)
+
+
+def resolve_original_model(baseline: Path, *, provider: Provider) -> str:
+    """Return one provider-authoritative source model or refuse to guess."""
+    records = tuple(_source_metadata_records(baseline))
+    if provider is Provider.CODEX:
+        models = _nested_model_values(records, "payload")
+        model = _single_model(baseline, models)
+        return f"openai-codex/{model}"
+    if provider is Provider.OMP:
+        models = _top_level_model_values(records)
+        model = _single_model(baseline, models)
+        message_model = _single_model(baseline, _nested_model_values(records, "message"))
+        if "/" not in model or message_model != model.rsplit("/", maxsplit=1)[1]:
+            raise OriginalModelError(
+                f"{baseline}: top-level OMP model does not agree with message model"
+            )
+        return model
+    if provider is Provider.CLAUDE_CODE:
+        return _single_model(baseline, _nested_model_values(records, "message"))
+    raise OriginalModelError(f"{baseline}: unsupported provider {provider.value!r}")
+
+
+def _source_metadata_records(baseline: Path) -> Sequence[dict[str, object]]:
+    """Read JSONL records solely to inspect provider-specific model fields."""
+    records: list[dict[str, object]] = []
+    try:
+        with baseline.open(encoding="utf-8") as source:
+            for line_number, line in enumerate(source, start=1):
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise OriginalModelError(
+                        f"{baseline}: invalid source metadata record {line_number}"
+                    ) from error
+                if isinstance(record, dict):
+                    records.append(cast(dict[str, object], record))
+    except OSError:
+        raise
+    return records
+
+
+def _top_level_model_values(records: Sequence[dict[str, object]]) -> set[str]:
+    return {
+        model.strip()
+        for record in records
+        if isinstance(model := record.get("model"), str) and model.strip() and model != "unknown"
+    }
+
+
+def _nested_model_values(records: Sequence[dict[str, object]], field: str) -> set[str]:
+    models: set[str] = set()
+    for record in records:
+        nested = record.get(field)
+        if not isinstance(nested, dict):
+            continue
+        model = cast(dict[str, object], nested).get("model")
+        if isinstance(model, str) and model.strip() and model != "unknown":
+            models.add(model.strip())
+    return models
+
+
+def _single_model(baseline: Path, models: set[str]) -> str:
     if len(models) != 1:
         description = "none" if not models else ", ".join(sorted(models))
         raise OriginalModelError(
@@ -194,17 +279,31 @@ def resolve_original_model(baseline: Path) -> str:
     return next(iter(models))
 
 
+def _resolve_model(
+    entry: StageCManifestEntry,
+    baseline: Path,
+    model_resolver: Callable[[Path], str] | None,
+) -> str:
+    if model_resolver is not None:
+        return model_resolver(baseline)
+    return resolve_original_model(baseline, provider=entry.provider)
+
+
 def resolve_session(
     entry: StageCManifestEntry,
     *,
     resolver: Callable[[Provider, str], Path | None] = resolve_session_path,
-    model_resolver: Callable[[Path], str] = resolve_original_model,
+    model_resolver: Callable[[Path], str] | None = None,
 ) -> ResolvedStageCSession | None:
     """Resolve a selected entry. Missing paths are accounted, never guessed."""
     baseline = resolver(entry.provider, entry.session_id)
     if baseline is None:
         return None
-    return ResolvedStageCSession(entry=entry, baseline=baseline, model=model_resolver(baseline))
+    return ResolvedStageCSession(
+        entry=entry,
+        baseline=baseline,
+        model=_resolve_model(entry, baseline, model_resolver),
+    )
 
 
 def run_untracked_batch(
@@ -213,7 +312,7 @@ def run_untracked_batch(
     spend_cap_usd: float,
     runner: SessionRunner,
     resolver: Callable[[Provider, str], Path | None] = resolve_session_path,
-    model_resolver: Callable[[Path], str] = resolve_original_model,
+    model_resolver: Callable[[Path], str] | None = None,
 ) -> tuple[BatchSessionResult, ...]:
     """Run entries with state-free, deterministic batch accounting.
 
@@ -236,7 +335,7 @@ def run_untracked_batch(
             )
             continue
         try:
-            model = model_resolver(resolved_path)
+            model = _resolve_model(entry, resolved_path, model_resolver)
         except OriginalModelError:
             results.append(
                 BatchSessionResult(session_id=entry.session_id, outcome="model_unresolved")
@@ -701,6 +800,12 @@ def audit_retailogists_exclusions(manifest: LoadedStageCManifest, audit: StageCA
         _audit_outcome(audit, entry, outcome="excluded_retailogists")
 
 
+def audit_model_unresolved_exclusions(manifest: LoadedStageCManifest, audit: StageCAudit) -> None:
+    """Record source-metadata exclusions before any replay client is constructed."""
+    for entry in manifest.excluded_model_unresolved:
+        _audit_outcome(audit, entry, outcome="model_unresolved")
+
+
 def run_resumable_batch(
     entries: Sequence[StageCManifestEntry],
     *,
@@ -709,7 +814,7 @@ def run_resumable_batch(
     ledger: StageCLedger,
     audit: StageCAudit,
     resolver: Callable[[Provider, str], Path | None] = resolve_session_path,
-    model_resolver: Callable[[Path], str] = resolve_original_model,
+    model_resolver: Callable[[Path], str] | None = None,
     after_completion: Callable[[CompletedSession], None] | None = None,
 ) -> tuple[BatchSessionResult, ...]:
     """Run a batch with durable completion before advancing to the next session.
@@ -753,7 +858,7 @@ def run_resumable_batch(
             )
             continue
         try:
-            model = model_resolver(baseline)
+            model = _resolve_model(entry, baseline, model_resolver)
         except OriginalModelError as error:
             _audit_outcome(audit, entry, outcome="model_unresolved", error=error)
             results.append(
