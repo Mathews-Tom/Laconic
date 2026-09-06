@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +49,69 @@ def _abandon_writer_mid_transaction(ledger: Path) -> None:
         check=True,
     )
     assert Path(f"{ledger}-journal").exists()
+
+
+def _half_built_ledger(sessions: Path) -> Path:
+    """Write the ledger a killed initialize used to leave behind.
+
+    `observations` present, the runtime tables missing, and no schema version
+    stamped — the exact shape a host that terminated a slow cold start left on
+    disk, which then broke every reader in the store.
+    """
+    sessions.mkdir(parents=True, exist_ok=True)
+    damaged = sessions / f"{'a' * 64}.sqlite3"
+    database = sqlite3.connect(damaged)
+    database.execute("CREATE TABLE observations (session_id TEXT, handle TEXT)")
+    database.commit()
+    database.close()
+    return damaged
+
+
+def test_status_reports_a_half_built_ledger_instead_of_failing_the_store(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    storage = RuntimeStorage(root)
+    with storage.open_ledger("healthy") as ledger:
+        ledger.record_runtime_decision(
+            sequence=0,
+            request_id="encode-a",
+            tool_name="Read",
+            outcome="emitted",
+            reason="smaller_envelope",
+            candidate_reference="healthy/F1",
+            raw_chars=100,
+            visible_chars=40,
+            latency_ms=2,
+        )
+    _half_built_ledger(resolve_data_dir(root) / "sessions")
+
+    status = runtime_storage_status(root)
+
+    # The healthy session's counters still come through; the damaged file is
+    # counted, not fatal.
+    assert status.damaged_ledgers == 1
+    assert status.sessions == 2
+    assert status.eligible_observations == 1
+    assert status.compressed_observations == 1
+
+
+def test_retention_can_purge_a_half_built_ledger(tmp_path: Path) -> None:
+    """Its filename is a hash of the session id, so `--session` cannot reach
+    it. Retention is the only supported route, and it must not raise on a
+    ledger it cannot query."""
+    root = tmp_path / "data"
+    RuntimeStorage(root)
+    damaged = _half_built_ledger(resolve_data_dir(root) / "sessions")
+    os.utime(damaged, (1_000.0, 1_000.0))
+
+    plan = preview_purge_older_than(60, root, now=10_000.0)
+    result = apply_purge(plan)
+
+    assert plan.targets == (damaged,)
+    assert result.deleted_sessions == 1
+    assert not damaged.exists()
+    assert runtime_storage_status(root).damaged_ledgers == 0
 
 
 def test_status_and_retention_survive_a_ledger_whose_writer_was_killed(

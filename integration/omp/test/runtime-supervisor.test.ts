@@ -100,6 +100,7 @@ function pythonInterpreter(): string {
 }
 
 const INTEGRATION_REQUEST_TIMEOUT_MS = 2_000;
+const INTEGRATION_START_TIMEOUT_MS = 10_000;
 
 function runtimeOptions(command: readonly string[], dataDirectory: string): RuntimeStartOptions {
   return {
@@ -109,6 +110,7 @@ function runtimeOptions(command: readonly string[], dataDirectory: string): Runt
     dataDirectory,
     policy: { span_budget: 120, keep_head: 40, keep_tail: 40, max_errors: 20 },
     requestTimeoutMs: INTEGRATION_REQUEST_TIMEOUT_MS,
+    startTimeoutMs: INTEGRATION_START_TIMEOUT_MS,
   };
 }
 
@@ -550,13 +552,52 @@ describe("JSONL runtime transport", () => {
       [pythonInterpreter(), "-c", "import time; time.sleep(5)"],
       join(root, "ledgers"),
     );
-    options.requestTimeoutMs = 25;
+    options.startTimeoutMs = 25;
     const started = performance.now();
     try {
       await expect(JsonlRuntimeProcess.start(options)).rejects.toThrow(
         "runtime request exceeded its deadline",
       );
       expect(performance.now() - started).toBeLessThan(500);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("judges a slow cold start by the start deadline, not the encode deadline", async () => {
+    // An engine that needs longer than one encode budget to come up must not
+    // be terminated for it: killing it mid-schema-creation is what left a
+    // half-built ledger behind. Steady-state requests keep the tight budget.
+    const root = mkdtempSync(join(tmpdir(), "laconic-omp-coldstart-"));
+    const options = runtimeOptions(
+      [pythonInterpreter(), "-c", "import time; time.sleep(0.6)"],
+      join(root, "ledgers"),
+    );
+    options.requestTimeoutMs = 50;
+    options.startTimeoutMs = 5_000;
+    try {
+      // The stub answers nothing, so it still fails — but on process exit,
+      // not on a 50 ms deadline it was never meant to be held to.
+      await expect(JsonlRuntimeProcess.start(options)).rejects.not.toThrow(
+        "runtime request exceeded its deadline",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the real engine initializes a cold store within the start deadline", async () => {
+    const root = mkdtempSync(join(tmpdir(), "laconic-omp-coldreal-"));
+    const options = runtimeOptions(
+      [pythonInterpreter(), "-I", "-m", "laconic.runtime"],
+      join(root, "ledgers"),
+    );
+    // Deliberately below what a cold interpreter start plus schema creation
+    // costs, so the start deadline is the thing under test.
+    options.requestTimeoutMs = 1;
+    try {
+      const runtime = await JsonlRuntimeProcess.start(options);
+      await runtime.shutdown();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

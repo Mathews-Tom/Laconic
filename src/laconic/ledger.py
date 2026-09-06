@@ -119,6 +119,15 @@ CREATE TABLE IF NOT EXISTS runtime_expansions (
 
 """
 
+#: :data:`SCHEMA`'s individual statements. `sqlite3.Connection.executescript`
+#: cannot be used inside a transaction — it commits first, then lets every
+#: statement stand alone — so the statements are applied one at a time inside
+#: one explicit transaction instead. See :meth:`Ledger._init_schema`.
+_SCHEMA_STATEMENTS = tuple(
+    statement.strip() for statement in SCHEMA.split(";") if statement.strip()
+)
+
+
 #: Columns a version-1 database's ``compactions`` table predates. Added with
 #: ``ALTER TABLE`` rather than by recreating the table, so existing rows —
 #: none in practice, since version 1 shipped with no writer — survive.
@@ -336,30 +345,44 @@ class Ledger:
             raise
 
     def _init_schema(self) -> None:
+        """Bring this database to :data:`SCHEMA_VERSION` atomically.
+
+        Every statement — the table shape, any version-1 migration, and the
+        ``user_version`` stamp that claims the shape exists — runs inside one
+        explicit transaction, so a process killed partway through leaves
+        either nothing or a complete ledger.
+
+        This matters because initialization is the one moment a ledger can be
+        killed mid-write: an OMP host that gives up on a slow cold start
+        terminates the engine, and a half-built ledger (``observations``
+        present, ``runtime_decisions`` missing) survives on disk and breaks
+        every later reader, including the operator commands that would have
+        cleaned it up. ``executescript`` cannot provide this: it commits any
+        pending transaction before it starts and then leaves each statement
+        standing alone.
+        """
         (version,) = self._db.execute("PRAGMA user_version").fetchone()
         if version > SCHEMA_VERSION:
             raise SchemaVersionError(
                 f"{self._path} was written by ledger schema {version}, "
                 f"and this build understands {SCHEMA_VERSION}"
             )
-        # ``executescript`` commits any pending transaction and DDL opens
-        # none, so there is no transaction to wrap here. A fresh (version 0)
-        # database gets the current, already-final table shape from this
-        # alone; only a real version-1 database predates it.
-        self._db.executescript(SCHEMA)
-        if version == 1:
-            self._migrate_v1_compactions()
-        self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-
-    def _migrate_v1_compactions(self) -> None:
-        """Add the columns a version-1 ``compactions`` table predates.
-
-        Existing rows are preserved: ``ALTER TABLE ADD COLUMN`` extends every
-        row with the column's default rather than rewriting the table.
-        """
-        with self._db:
-            for statement in _V2_COMPACTION_COLUMNS:
+        # Python's sqlite3 opens an implicit transaction only before DML, so
+        # DDL needs an explicit BEGIN to be covered by one at all.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _SCHEMA_STATEMENTS:
                 self._db.execute(statement)
+            if version == 1:
+                # ALTER TABLE ADD COLUMN extends every existing row with the
+                # column's default rather than rewriting the table.
+                for statement in _V2_COMPACTION_COLUMNS:
+                    self._db.execute(statement)
+            self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        except BaseException:
+            self._db.rollback()
+            raise
+        self._db.commit()
 
     def _recover_counters(self) -> dict[ObservationKind, int]:
         """Resume handle numbering from what this session already stored.

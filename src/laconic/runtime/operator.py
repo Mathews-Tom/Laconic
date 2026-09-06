@@ -33,6 +33,8 @@ class RuntimeStorageStatus:
     visible_chars: int
     full_expansions: int
     span_expansions: int
+    damaged_ledgers: int
+    """Ledgers whose schema is unreadable, typically a killed initialize."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +136,25 @@ def _query_only(path: Path) -> sqlite3.Connection:
     return database
 
 
-def _read_metrics(path: Path) -> tuple[int, int, int, int, int, int, int]:
+def _read_metrics(path: Path) -> tuple[int, int, int, int, int, int, int] | None:
+    """Aggregate one ledger's counters, or ``None`` if it is unreadable.
+
+    A ledger whose writer was killed before it finished creating its schema
+    has tables missing rather than merely a hot journal, so a query raises
+    instead of returning rows. One such file used to abort the whole scan and
+    leave `status` and `purge --older-than` unusable for every other session
+    in the store, with no supported way to remove the damaged file. Reporting
+    it as damaged and continuing keeps both surfaces working, and letting
+    :func:`_last_activity` fall back to the file's mtime lets retention purge
+    it.
+    """
+    try:
+        return _read_metrics_strict(path)
+    except sqlite3.DatabaseError:
+        return None
+
+
+def _read_metrics_strict(path: Path) -> tuple[int, int, int, int, int, int, int]:
     with closing(_query_only(path)) as database:
         decisions = database.execute(
             "SELECT count(*), "
@@ -168,9 +188,13 @@ def runtime_storage_status(data_dir: Path | None = None) -> RuntimeStorageStatus
     ledgers = _owned_ledger_files(root)
     totals = [0] * 7
     storage_bytes = 0
+    damaged = 0
     for ledger in ledgers:
         metrics = _read_metrics(ledger)
-        totals = [current + value for current, value in zip(totals, metrics, strict=True)]
+        if metrics is None:
+            damaged += 1
+        else:
+            totals = [current + value for current, value in zip(totals, metrics, strict=True)]
         storage_bytes += _file_bytes(ledger)
         storage_bytes += sum(_file_bytes(sidecar) for sidecar in _sidecar_paths(ledger))
     return RuntimeStorageStatus(
@@ -185,6 +209,7 @@ def runtime_storage_status(data_dir: Path | None = None) -> RuntimeStorageStatus
         visible_chars=totals[4],
         full_expansions=totals[5],
         span_expansions=totals[6],
+        damaged_ledgers=damaged,
     )
 
 
@@ -214,13 +239,23 @@ def preview_purge_session(session_id: str, data_dir: Path | None = None) -> Purg
 
 
 def _last_activity(path: Path) -> float:
-    with closing(_query_only(path)) as database:
-        row = database.execute(
-            "SELECT max(created_at) FROM ("
-            "SELECT created_at FROM observations UNION ALL "
-            "SELECT created_at FROM runtime_decisions UNION ALL "
-            "SELECT created_at FROM runtime_expansions)"
-        ).fetchone()
+    """Return this ledger's last recorded activity, or its file mtime.
+
+    An unreadable ledger falls back to mtime rather than raising, so
+    retention can purge a file a killed initialize left half-built. That is
+    the only supported route to removing one: its filename is a hash of the
+    session id, which an operator cannot reverse to pass to `--session`.
+    """
+    try:
+        with closing(_query_only(path)) as database:
+            row = database.execute(
+                "SELECT max(created_at) FROM ("
+                "SELECT created_at FROM observations UNION ALL "
+                "SELECT created_at FROM runtime_decisions UNION ALL "
+                "SELECT created_at FROM runtime_expansions)"
+            ).fetchone()
+    except sqlite3.DatabaseError:
+        return path.stat().st_mtime
     if row is None or row[0] is None:
         return path.stat().st_mtime
     return float(row[0])

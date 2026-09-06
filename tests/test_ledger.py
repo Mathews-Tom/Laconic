@@ -756,3 +756,38 @@ def test_a_v1_compactions_table_migrates_in_place(tmp_path: Path) -> None:
         ).fetchone()
         assert row == ("s1", 1, 100, 40, 3.5, None, 0, 1, "")
         assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,)
+
+
+def test_a_killed_initialize_leaves_no_half_built_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schema creation is one transaction, so an initialize that dies partway
+    leaves nothing rather than a ledger with `observations` present and the
+    runtime tables missing — the shape that broke every later reader,
+    including the operator commands that would have removed it."""
+    db_path = tmp_path / "ledger.db"
+    statements = laconic.ledger._SCHEMA_STATEMENTS
+    assert len(statements) > 1, "the test needs more than one statement to die between"
+
+    # Fail after the first table exists but before the rest do.
+    monkeypatch.setattr(
+        laconic.ledger,
+        "_SCHEMA_STATEMENTS",
+        (*statements[:1], "SELECT raise_after_first_statement()"),
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        Ledger(db_path, "s1")
+    monkeypatch.undo()
+
+    with inspect(db_path) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert tables == set(), f"a partial schema survived: {sorted(tables)}"
+        assert db.execute("PRAGMA user_version").fetchone() == (0,)
+
+    # The same path still builds a complete ledger afterwards.
+    with Ledger(db_path, "s1"):
+        pass
+    with inspect(db_path) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"observations", "runtime_decisions", "runtime_expansions"} <= tables
+        assert db.execute("PRAGMA user_version").fetchone() == (SCHEMA_VERSION,)

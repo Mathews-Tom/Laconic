@@ -850,6 +850,7 @@ def _runtime_status_document(
             "visible_chars": storage.visible_chars,
             "full_expansions": storage.full_expansions,
             "span_expansions": storage.span_expansions,
+            "damaged_ledgers": storage.damaged_ledgers,
         },
     }
 
@@ -897,6 +898,13 @@ def _runtime_status(args: argparse.Namespace) -> int:
     )
     print(f"  stored bytes: {storage['bytes']}")
     print(f"  expansions: full={storage['full_expansions']} span={storage['span_expansions']}")
+    damaged = storage["damaged_ledgers"]
+    assert isinstance(damaged, int)
+    if damaged:
+        print(
+            f"  damaged ledgers: {damaged} (unreadable schema; "
+            "remove with `laconic purge --older-than <duration>`)"
+        )
     return EXIT_OK
 
 
