@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- `laconic research spend report` reads OMP session usage and the runtime ledger, both strictly read-only, and reports where model spend actually went in this machine's own sessions alongside what the codec did in those same sessions. Output goes to the git-ignored `.laconic/spend/` as deterministic JSON and Markdown, guarded by an exact-key privacy allowlist that also refuses a report whose limitations block has been weakened.
+- The report makes **no savings claim and contains no savings figure**. Every session it can read ran with the codec enabled, so the corpus is single-arm: there is no counterfactual in it and none can be derived from it. The committed K1 fixture's 8.53% remains the only bound on a general savings claim.
+
 ### Changed
 
 - Corrected the current-state claims in `README.md`, `docs/grounding.md`, `docs/overview.md`, `docs/pitch.md`, `docs/system-design.md`, `docs/omp-runtime.md`, and `docs/research-disposition.md`. They still described the runtime as an unreleased candidate awaiting a manual tag, PyPI upload, and GitHub Release, named `0.8.0` as the published version, and told readers to install the runtime from a source checkout. `v0.9.0` and `v0.9.1` are both published, and `uv tool install laconic` is the install path.
