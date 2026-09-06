@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- Corrected the current-state claims in `README.md`, `docs/grounding.md`, `docs/overview.md`, `docs/pitch.md`, `docs/system-design.md`, `docs/omp-runtime.md`, and `docs/research-disposition.md`. They still described the runtime as an unreleased candidate awaiting a manual tag, PyPI upload, and GitHub Release, named `0.8.0` as the published version, and told readers to install the runtime from a source checkout. `v0.9.0` and `v0.9.1` are both published, and `uv tool install laconic` is the install path.
+
 ## [0.9.1] — 2026-09-06
 
 ### Fixed

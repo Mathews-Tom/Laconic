@@ -27,7 +27,7 @@ Laconic operates on that traffic:
 
 The codec is lossy in presentation and **lossless in reach**: every elision is addressable and expandable. That invariant is what makes the compression safe, and it is the thing the harness exists to verify.
 
-**Current status:** the published version 0.8.0 releases the codec, ledger, evaluation, rendering, and Observe diagnostic surfaces but no live integration. This checkout is version 0.9.0 and adds the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open result interception, and operator controls. M18 real-OMP qualification has passed and its human review gate is signed (`docs/runtime-beta-report.md`); only the manual tag, PyPI upload, and GitHub Release remain. Claude Code follows after OMP dogfood; action rewriting, history compaction, and MCP remain deferred.
+**Current status:** the published version 0.9.1 releases the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open result interception, and operator controls, alongside the codec, ledger, evaluation, rendering, and Observe diagnostic surfaces. Versions up to 0.8.0 had no live integration. M18 real-OMP qualification has passed and its human review gate is signed (`docs/runtime-beta-report.md`). Claude Code follows after OMP dogfood; action rewriting, history compaction, and MCP remain deferred.
 
 ### What Laconic is NOT
 

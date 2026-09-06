@@ -4,7 +4,7 @@
 
 Laconic sits at the **tool-result boundary** of an existing coding agent. The first runtime product is an explicitly installed OMP extension backed by one session-owned Python engine. The host adapter owns the session-scoped engine process lifecycle and result mutation; the engine owns encoding, recovery, decisions, and local storage.
 
-The published version 0.8.0 has no live codec integration. This checkout is version 0.9.0 and contains the OMP runtime shown below; M18 qualification has passed and its human review gate is signed, so only the manual tag, PyPI upload, and GitHub Release remain.
+The published version 0.9.1 contains the OMP runtime shown below; M18 qualification has passed and its human review gate is signed. Versions up to 0.8.0 had no live codec integration.
 
 ```mermaid
 graph TB
@@ -49,7 +49,7 @@ Thin adapters share this canonical engine. OMP is first. Claude Code requires a 
 ---
 ## 2. Component Design
 
-**Maturity boundary:** version 0.8.0 releases the codec, ledger, replay, renderer, action codec, and residency decision accounting. The repository's unreleased runtime candidate adds the session runtime, namespaced envelope, OMP adapter, and operator controls. Action rewriting and applied residency compaction are not part of the beta.
+**Maturity boundary:** version 0.9.1 releases the codec, ledger, replay, renderer, action codec, residency decision accounting, the session runtime, the namespaced envelope, the OMP adapter, and operator controls. Action rewriting and applied residency compaction are not part of the beta.
 
 ### 2.1 Handle ledger (`src/laconic/ledger.py`)
 
@@ -538,7 +538,7 @@ M16 and M17 finalize the protocol and operator schemas. M15 does not claim a con
 ---
 ## 7. Package Boundaries
 
-Version 0.8.0 already contains the canonical Python codec, ledger, replay, renderer, Observe, gate, and K1 packages. The runtime tranche adds only these primary boundaries:
+Version 0.8.0 already contained the canonical Python codec, ledger, replay, renderer, Observe, gate, and K1 packages. The runtime tranche, released in 0.9.0, added only these primary boundaries:
 
 ```text
 src/laconic/runtime/             # protocol, references, decisions, session engine, stdio

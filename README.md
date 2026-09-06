@@ -1,17 +1,15 @@
 # Laconic – Compress what a coding agent carries, not what it says.
 
-> **Status: runtime beta prepared as v0.9.0; published package is still v0.8.0.** The repository contains the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open boundary, and operator CLI. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). This checkout is version 0.9.0; publication to PyPI and the GitHub Release are manual and pending.
+> **Status: the opt-in OMP runtime beta is published as v0.9.1.** The package contains the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open boundary, and operator CLI. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
 
 Laconic is a private, local runtime codec for existing coding agents. It reduces eligible model-visible `read`, `bash`, `grep`, and `glob` observations while preserving exact, on-demand access to omitted content. It integrates with OMP rather than replacing it.
 
 > **[`docs/grounding.md`](docs/grounding.md) is the authoritative statement of what Laconic is, what it deliberately is not, and how to detect strategy drift.** Read it before proposing or reviewing changes.
 
-## Install the runtime candidate
-
-From a source checkout:
+## Install the runtime
 
 ```bash
-uv tool install .
+uv tool install laconic
 laconic install omp --dry-run
 laconic install omp
 ```
@@ -37,7 +35,7 @@ Start OMP normally. Use `/laconic status|pause|resume` in the active session, `l
 
 ## Source checkout
 
-Published version 0.8.0 contains the codec, evaluation, rendering, and Observe surfaces but no live runtime integration. It exposes research commands at the top level, such as `laconic measure` and `laconic gates`. The current source checkout moves those commands under the explicit `research` namespace:
+Published version 0.9.1 contains the runtime, the codec, evaluation, rendering, and Observe surfaces. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
 
 ```bash
 uv run laconic research measure tests/corpus --expect tests/corpus/expected.json
@@ -52,8 +50,9 @@ The committed fixture reports K1 net savings of 8.53% against its pre-registered
 1. ~~Build a transport-neutral session engine with namespaced exact recovery and strict-smaller decisions.~~
 2. ~~Package an ownership-safe OMP extension with a 250 ms deadline, fail-open behavior, expansion, and operator controls.~~
 3. ~~Qualify the built package through at least 10 completed real OMP sessions across 3 repositories and at least 100 eligible observations.~~
-4. Publish the opt-in OMP beta: version 0.9.0 is prepared and awaits the manual tag, PyPI upload, and GitHub Release.
-5. Design the Claude Code adapter separately after the protocol survives OMP dogfood. MCP, action rewriting, and history compaction remain deferred.
+4. ~~Publish the opt-in OMP beta.~~ Published as `v0.9.0`, with `v0.9.1` correcting a cold-start defect that only a clean first install could reach.
+5. Measure where model spend actually goes in real sessions before deciding whether any token or cost claim is supportable. Composition first; a controlled on/off comparison is a separate step that is not authorized.
+6. Design the Claude Code adapter separately after the protocol survives OMP dogfood. MCP, action rewriting, and history compaction remain deferred.
 
 ## License
 
