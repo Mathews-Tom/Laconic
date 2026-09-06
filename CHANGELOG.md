@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-09-06
+
 ### Fixed
 
 - Fixed a first-run failure found by dogfooding a clean install. Engine startup was judged by the same 250 ms deadline as a steady-state encode, but a cold start pays interpreter startup, module imports, and schema creation — measured at 199-215 ms with warm caches, so it intermittently overran. The host then terminated the engine mid-schema-creation, and the half-built ledger it left behind (`observations` present, the runtime tables missing) broke every later reader. Initialization now has its own generous deadline; per-observation encode keeps the 250 ms boundary unchanged.
@@ -117,7 +119,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Initial packaging, lint, strict typing, test, and CI surface, with an importable `laconic` package and a `laconic` console script exposing `--version` and `--help`.
 
-[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.5.0...v0.7.0
