@@ -65,7 +65,7 @@ Headroom performs compression locally, but Headroom 0.37.0 separately enables an
 
 Laconic's real-OMP qualification covered ten sessions across three repositories and 137 eligible observations. Every safety counter was zero; encoding latency was 1.45 ms at p50 and 18.65 ms at p95; the read-heavy workload showed 35.84% character reduction.
 
-That result does not establish token, cost, cache, or behavior savings. Laconic's spend report is single-arm, and its controlled codec-on/codec-off comparison is designed but not implemented or authorized. The documentation preserves those limits rather than treating character reduction as a provider-bill result.
+That result does not establish token, cost, cache, or behavior savings. Laconic's spend report is single-arm. A bounded native OMP/Laconic/Headroom variance pilot is owner-authorized but has not run; it cannot establish an effect even when complete. The documentation preserves those limits rather than treating character reduction or pilot dispersion as a provider-bill result.
 
 ## Where Headroom excels
 
@@ -93,7 +93,7 @@ Do not run both over the same observation path without a separate compatibility 
 
 No controlled head-to-head coding-agent study currently shows that Laconic saves more tokens or money, preserves behavior better, or completes tasks faster than Headroom. Their published measurements use different workloads, units, profiles, and evaluation designs.
 
-A valid comparison must run native OMP, Laconic, and Headroom on the same pinned tasks; randomize within-task arm order; charge expansions and extra turns to the arm that caused them; use provider-reported input, cache-read, cache-write, and output counters; and judge task completion separately from compression ratio. Until that study is explicitly authorized and completed, this document compares architecture and guarantees only.
+A valid comparison must run native OMP, Laconic, and Headroom on the same pinned tasks; randomize within-task arm order; charge expansions and extra turns to the arm that caused them; use one pinned OMP model/catalog and its provider-counter-derived cost fields; and judge task completion separately from compression ratio. The authorized first run publishes variance, correlation, completeness, and mechanism evidence only — no arm means, effect estimate, savings claim, or product-superiority claim. A confirmatory comparison requires its own frozen sample and explicit spend authorization.
 
 ## Sources
 
