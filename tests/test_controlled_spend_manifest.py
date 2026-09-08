@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import json
+import shutil
+from pathlib import Path
+
+import pytest
+
+import tools.controlled_spend.manifest as manifest_module
+from tools.controlled_spend.manifest import (
+    ARMS,
+    DEFAULT_MANIFEST_PATH,
+    RUN_COUNT,
+    ManifestError,
+    canonical_json,
+    materialize_task,
+    validate_manifest_file,
+    validate_manifest_json,
+    verify_completion_oracles,
+)
+
+
+def test_frozen_manifest_and_fixture_oracles_are_complete() -> None:
+    manifest = validate_manifest_file()
+
+    assert len(manifest.tasks) == 4
+    assert len(manifest.run_order) == RUN_COUNT
+    assert {run.arm for run in manifest.run_order} == set(ARMS)
+    verify_completion_oracles(manifest)
+
+
+def test_materialized_task_is_a_clean_git_repository(tmp_path: Path) -> None:
+    manifest = validate_manifest_file()
+    destination = tmp_path / "task"
+
+    materialize_task(manifest.tasks[0], destination)
+
+    assert (destination / ".git").is_dir()
+    assert not (destination / "PROMPT.txt").exists()
+    assert not (destination / "solution.patch").exists()
+
+
+def test_runtime_bytecode_does_not_change_or_leak_into_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixtures = tmp_path / "fixtures"
+    shutil.copytree(
+        manifest_module.FIXTURES_ROOT,
+        fixtures,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    monkeypatch.setattr(manifest_module, "FIXTURES_ROOT", fixtures)
+    cache = fixtures / "t01" / "seed" / "tests" / "__pycache__"
+    cache.mkdir()
+    (cache / "runtime.pyc").write_bytes(b"runtime")
+
+    manifest = validate_manifest_file()
+    destination = tmp_path / "task"
+    materialize_task(manifest.tasks[0], destination)
+
+    assert not list(destination.rglob("__pycache__"))
+    assert not list(destination.rglob("*.pyc"))
+
+
+def test_fixture_source_mutation_is_rejected(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "pilot-manifest.json"
+    manifest_path.write_bytes(DEFAULT_MANIFEST_PATH.read_bytes())
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["tasks"][0]["source_sha256"] = "0" * 64
+    manifest_path.write_bytes(canonical_json(payload))
+
+    with pytest.raises(ManifestError, match="fixture source digest drifted"):
+        validate_manifest_file(manifest_path)
+
+
+def test_duplicate_run_cell_is_rejected() -> None:
+    payload = json.loads(DEFAULT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    payload["run_order"][1] = dict(payload["run_order"][0], run_id="replacement")
+
+    with pytest.raises(ManifestError, match="each task/repetition/arm cell exactly once"):
+        validate_manifest_json(payload)
+
+
+def test_unreviewed_manifest_key_is_rejected() -> None:
+    payload = json.loads(DEFAULT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    payload["new_field"] = "not reviewed"
+
+    with pytest.raises(ManifestError, match="manifest keys differ"):
+        validate_manifest_json(payload)
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "message"),
+    [
+        ("omp", "model", "different-model", "OMP/model settings differ"),
+        ("limits", "total_spend_usd", "10.01", "total spend cap"),
+        ("analysis", "action_threshold_fraction", "0.11", "analysis differs"),
+    ],
+)
+def test_safety_pins_reject_drift(section: str, key: str, value: str, message: str) -> None:
+    payload = json.loads(DEFAULT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    payload[section][key] = value
+
+    with pytest.raises(ManifestError, match=message):
+        validate_manifest_json(payload)
+
+
+def test_noncanonical_manifest_serialization_is_rejected(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest_path = tmp_path / "pilot-manifest.json"
+    manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="canonical JSON serialization"):
+        validate_manifest_file(manifest_path)
