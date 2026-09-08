@@ -1,0 +1,5 @@
+--- a/config_store.py
++++ b/config_store.py
+@@ -14 +14 @@
+-            merged.setdefault(key, value)
++            merged[key] = value

@@ -1,0 +1,7 @@
+--- a/dependency_order.py
++++ b/dependency_order.py
+@@ -21,2 +21,2 @@
+-            indegree[dependency] += 1
+-            dependents[item].append(dependency)
++            indegree[item] += 1
++            dependents[dependency].append(item)

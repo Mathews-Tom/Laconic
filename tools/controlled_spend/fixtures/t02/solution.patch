@@ -1,0 +1,26 @@
+--- a/assignment_parser.py
++++ b/assignment_parser.py
+@@ -12,2 +12,8 @@
+-    candidate = line.split("#", 1)[0].strip()
+-    if not candidate or "=" not in candidate:
++    lexer = shlex.shlex(line, posix=True, punctuation_chars="=")
++    lexer.commenters = "#"
++    lexer.whitespace_split = True
++    try:
++        parts = list(lexer)
++    except ValueError as error:
++        raise AssignmentError("invalid quoted value") from error
++    if len(parts) != 3 or parts[1] != "=":
+@@ -15,2 +21 @@
+-    key, raw_value = candidate.split("=", 1)
+-    key = key.strip()
++    key, _, value = parts
+@@ -19,7 +24 @@
+-    try:
+-        parts = shlex.split(raw_value, comments=False, posix=True)
+-    except ValueError as error:
+-        raise AssignmentError("invalid quoted value") from error
+-    if len(parts) != 1:
+-        raise AssignmentError("value must be one shell word")
+-    return key, parts[0]
++    return key, value

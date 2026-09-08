@@ -1,0 +1,1 @@
+Run `python3 diagnose.py` first. Fix assignment parsing so `#` begins a comment only outside quoted values; quoted hashes remain part of the value. Preserve escaped characters and reject malformed assignments. Do not modify tests. Completion requires `python3 -m unittest discover -s tests -q` to exit zero.

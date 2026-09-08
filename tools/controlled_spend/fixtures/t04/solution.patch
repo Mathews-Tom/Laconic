@@ -1,0 +1,8 @@
+--- a/ttl_cache.py
++++ b/ttl_cache.py
+@@ -31 +31 @@
+-        if entry.expires_at < self._clock():
++        if entry.expires_at <= self._clock():
+@@ -38 +38 @@
+-        expired = [key for key, entry in self._entries.items() if entry.expires_at < now]
++        expired = [key for key, entry in self._entries.items() if entry.expires_at <= now]

@@ -1,0 +1,1 @@
+Run `python3 diagnose.py` first. Fix cache expiration so an entry is unavailable at the exact expiration timestamp and pruning follows the same boundary. Preserve the injectable clock and zero-TTL behavior. Do not modify tests. Completion requires `python3 -m unittest discover -s tests -q` to exit zero.
