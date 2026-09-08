@@ -6,6 +6,14 @@ Laconic is a private, local runtime codec for existing coding agents. It reduces
 
 > **[`docs/grounding.md`](docs/grounding.md) is the authoritative statement of what Laconic is, what it deliberately is not, and how to detect strategy drift.** Read it before proposing or reviewing changes.
 
+## How Laconic differs from Headroom
+
+[Headroom](https://github.com/headroomlabs-ai/headroom) is a broad context-compression platform: libraries, a local provider proxy, MCP tools, agent wrappers, multiple compressors, memory, cache-aware request handling, and optional output shaping. Laconic is intentionally narrower. It intercepts OMP tool results inside the host, leaves provider configuration unchanged, and focuses on coding-agent observations backed by exact local recovery.
+
+Laconic's strongest distinction is file reads. Headroom's default coding profile protects reads because agents need exact source bytes. Laconic stores those exact bytes first, then can replace a large read with a structural outline and requested span while preserving exact full or line-span expansion until explicit purge. The OMP beta adds strict-smaller replacement, bounded fail-open behavior, owner-namespaced recovery, explicit operator controls, and no Laconic telemetry or hosted service.
+
+Headroom is the stronger choice for broad client, provider, content-type, and framework coverage. Laconic is the stronger fit when the requirement is an OMP-native, provider-neutral, auditable observation boundary with durable exact recovery. No controlled head-to-head study establishes a token, cost, cache, latency, or behavior advantage for either system on the same coding-agent tasks. See [`docs/headroom-comparison.md`](docs/headroom-comparison.md) for the version-pinned comparison, evidence limits, and source links.
+
 ## Install the runtime
 
 ```bash
@@ -22,6 +30,7 @@ Start OMP normally. Use `/laconic status|pause|resume` in the active session, `l
 | --- | --- |
 | [`docs/grounding.md`](docs/grounding.md) | Product boundary, invariants, runtime gate, and drift checks |
 | [`docs/omp-runtime.md`](docs/omp-runtime.md) | Runtime installation, interception boundary, recovery, controls, uninstall, and purge |
+| [`docs/headroom-comparison.md`](docs/headroom-comparison.md) | Version-pinned comparison with Headroom: product boundaries, strengths, recovery, privacy, and evidence limits |
 | [`docs/research-disposition.md`](docs/research-disposition.md) | Prior evidence, terminal research outcomes, and claims that remain unproven |
 | [`docs/pitch.md`](docs/pitch.md) | The short version: problem, measured channel opportunity, product boundary, and limitations |
 | [`docs/overview.md`](docs/overview.md) | Full what/why/how, measurements, positioning, and separated product/research gates |
