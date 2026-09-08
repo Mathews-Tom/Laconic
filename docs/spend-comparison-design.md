@@ -1,6 +1,6 @@
 # Controlled Spend Comparison — Design
 
-**Status: designed, not implemented, not authorized.** This document specifies what a controlled codec-on/codec-off comparison would require. Nothing in this repository implements it, and nothing in this repository is permitted to run it. Implementing it requires a fresh explicit instruction from the owner.
+**Status: owner-authorized variance pilot; implementation and paid execution pending.** H-99 records the M19 human review sign-off, the fresh instruction to implement and run one bounded pilot, and the owner's fixed choices: a $10 total provider-spend cap, Claude Sonnet 5, and a 10% smallest effect worth acting on. This authorization does not extend to a confirmatory run or a savings claim.
 
 ## 1. Why the existing measurement cannot answer the question
 
@@ -8,7 +8,7 @@
 
 It cannot measure savings, and no refinement of it can. Every session it reads ran with the codec enabled. There is no observation anywhere in that data of the same work done without the codec, so there is no quantity to subtract. This is not a precision problem that more sessions would fix; it is the absence of a comparison arm. The only bound on a general savings claim remains the committed K1 fixture's 8.53%, and that fixture is a deterministic gate-harness check, not representative evidence.
 
-A comparison therefore requires generating new data under a design that produces both arms. That is the subject of this document.
+A comparison therefore requires generating new data under a design that produces all three controlled arms. That is the subject of this document.
 
 ## 2. The unit of work
 
@@ -28,37 +28,41 @@ A task must satisfy all of:
 
 Tasks that cannot meet all five are excluded before any arm runs, not after results are visible.
 
-## 3. Arming
+## 3. Arms and pairing
 
-**Decision: paired repetition of the same task, with randomized within-pair order, and repeated measurement per cell.**
+**Decision: three arms, paired repetition of the same task, randomized within each task/repetition block.**
 
-Three candidates were considered.
+The pilot arms are:
 
-*Per-session alternation* — flip the codec on and off between the owner's ordinary sessions. **Rejected.** The work differs between sessions, so the treatment is confounded with the task. This is the design that produces a number quickly and cannot defend it.
+1. **native OMP** — no Laconic extension and no Headroom transformation;
+2. **Laconic** — the shipped OMP tool-result codec, including every induced `laconic_expand` call and extra turn;
+3. **Headroom 0.37.0** — OMP routed through Headroom's shipped coding profile, with its anonymous beacon disabled.
 
-*Paired repetition* — run the same task, from the same pinned commit, once with the codec on and once with it off. **Selected.** The task is held fixed, so the difference is attributable to the arm and to run-to-run variance, and to nothing else about what was being done.
+The primary statistical contrast is Laconic versus native OMP. The Headroom arm answers the public architecture comparison's adjacent-product question, but this pilot does not power or claim Laconic-versus-Headroom superiority. Headroom completion and mechanism evidence, cost correlation, and pilot dispersion may be reported under the same effect-suppression rule as the primary contrast.
 
-*Between-subjects across many tasks* — different tasks in each arm, relying on randomization and volume. **Rejected for the first study.** The per-task cost variance an agent workload exhibits puts the sample required to detect a plausible effect far beyond what a single owner can generate. It remains the correct design for a later multi-participant study.
+*Per-session alternation* is rejected because ordinary sessions do different work. *Between-task arms* are rejected because task variance would be confounded with treatment. Every arm instead starts from the same task tree and receives the same prompt, model, thinking level, tools, request limit, wall-clock limit, and completion oracle.
 
-Within a pair, arm order is randomized: agents are nondeterministic, and always running codec-off first would confound the arm with any ordering effect (warmer file caches, a differently populated model-side cache on the provider). Each (task, arm) cell is run *k* times, because a single run of a nondeterministic agent is a draw, not a measurement. Analysis is paired by task, on the per-task difference of the cell means — see §7 for the exact estimand.
+The variance pilot freezes four deterministic tasks and two repetitions per task/arm: 24 maximum task runs. All three arm orders within each `(task, repetition)` block come from one committed random seed. The task list, source digests, prompts, completion oracles, arm orders, metric, estimator, action threshold, limits, privacy fields, and stopping rules are committed before the credential probe or first paid arm. Adding, dropping, restarting, or tuning a cell after any paid result invalidates the pilot.
 
-**Freeze before running:** task list, *k*, the metric, the estimand and estimator, the effect-size threshold, and the stopping rule are all written down and committed before the first arm executes. Adding a task, dropping a task, or changing *k* after seeing results invalidates the study.
+This pilot freeze is distinct from a confirmatory pre-registration. The confirmatory sample cannot be fixed until the pilot supplies paired dispersion. A later confirmatory manifest must fix its sample and spend cap before its first arm and requires a new explicit owner authorization.
 
 ## 4. The metric
 
-**Decision: total modelled cost per task run, in USD, under one pinned price table, with token components reported alongside.**
+**Decision: total OMP-modelled cost per completed task run, in USD. Provider-reported token components remain private by arm; any public component totals are pooled across all arms and carry no arm label.**
 
-Cost, not tokens, because the four token classes are billed at four different rates and the codec plausibly moves volume between them: it can shorten a result (fewer tokens written into the cached prefix) while changing the prefix (invalidating a cache the next turn would otherwise have read cheaply). A token count that adds those four classes together would hide exactly the effect that matters.
+Cost, not undifferentiated tokens, is the decision metric because uncached input, five-minute cache writes, one-hour cache writes, cache reads, and output have different prices. The codec may reduce one class while increasing another. Per-arm component totals stay in private analysis state because they sum to the suppressed arm cost and would reconstruct the pilot effect.
 
-Cost is modelled by `laconic.costs` from provider-reported token counters, at a price table pinned for the whole study. Providers return counters, not prices. The pinned table must include every model used, so that no arm is billed at a fallback rate. `laconic.costs.PRICING` today carries published prices for a handful of Anthropic models only, and `laconic.costs.unpriced_models` names every model a corpus used that is missing from it; a comparison may not begin until that list is empty for the models it uses.
+M19 originally selected `laconic.costs`. H-98 proved that choice is invalid for this pilot: its Claude Sonnet 5 entry is stale, and OMP transcripts do not expose the per-turn one-hour cache-write token split needed to reproduce the host's charge. The pilot therefore pins OMP 18.1.14 and its `anthropic/claude-sonnet-5` catalog entry, and treats each turn's OMP `usage.cost` object as the primary modelled-cost record. The catalog snapshot must agree with [Anthropic's published rates](https://platform.claude.com/docs/en/about-claude/pricing) at freeze time: $2/MTok base input, $2.50/MTok five-minute cache write, $4/MTok one-hour cache write, $0.20/MTok cache read, and $10/MTok output. A mismatch stops the pilot before a paid call.
 
-Secondary, reported but not the decision metric: wall-clock duration, turn count, and completion (did the arm satisfy the task's condition at all). §7 fixes the estimand these figures are analysed on.
+Providers report token counters, not dollars; OMP applies its catalog. The report states that provenance and never labels OMP-modelled cost as an invoice. `laconic.costs` is not changed by this study because repricing it would rewrite historical K1 and M19 figures.
+
+The shared provider gateway separately computes a conservative spend reservation before forwarding each request. That reservation enforces the hard cap; it is not substituted for OMP cost in the analysis. Secondary fields are wall-clock duration, assistant-turn count, provider-request count, completion, and mechanism-fired counters.
 
 ## 5. Induced expansion
 
-**Decision: induced expansion is charged to the codec arm in full, as ordinary spend, and additionally reported separately.**
+**Decision: induced expansion is charged to the Laconic arm in full as ordinary spend; only content-free expansion counts may be reported separately.**
 
-When the codec replaces a result, the agent may call `laconic_expand` to recover it. Every token of that call — the request, the recovered content entering the context, and every subsequent turn that re-reads it from the cached prefix — is spend the codec-off arm never incurs. It is not overhead to be netted out or excused; it is the cost of the mechanism.
+When the codec replaces a result, the agent may call `laconic_expand` to recover it. Every token of that call — the request, the recovered content entering the context, and every subsequent turn that re-reads it from the cached prefix — is spend the native OMP primary comparator does not incur. It is not overhead to be netted out or excused; it is the cost of the mechanism.
 
 Charging it in full is automatic if the metric is the arm's total cost, which is why the metric is defined that way rather than as a sum over compressed observations. The separate report exists for diagnosis, not for adjustment: an arm that wins only after its expansions are excluded has not won.
 
@@ -66,63 +70,52 @@ The same rule covers induced *work*: extra turns the agent takes because it saw 
 
 ## 6. Cache-write amortization
 
-**Unresolved, and this is the hardest part of the design.**
+**Decision: compare whole-task totals and make no per-compression cost attribution.**
 
-The codec changes the prompt prefix. A cached prefix is billed at 1.25× input to write and 0.10× input to read, so a change that invalidates a prefix pays the write again and loses the cheap reads that would have followed. Over a long session, a single mid-prefix change can cost more than every character it removed.
+The codec changes the prompt prefix. A cached prefix can be billed above base input to write and below base input to read, so a change may pay a new write and lose later cheap reads. The charge is displaced in time, order-dependent, and controlled by provider cache behavior that is visible only through aggregate counters.
 
-Three properties make this hard to attribute:
+The first study therefore compares the whole cost accumulated while completing a task. Cache component totals are descriptive diagnostics only. No report attributes a cache-write or cache-read delta to an individual Laconic encoding, expansion, or Headroom transformation. A system that wins only after one of its induced cost classes is excluded has not won.
 
-- The charge is **displaced in time**. The write happens on the turn the prefix changes; the loss shows up as reads that never occur on later turns.
-- The charge is **order-dependent**. The same set of observations, compressed in a different order, produces different cache behavior.
-- The provider's cache policy is **not observable**. Time-to-live, eviction, and prefix-matching granularity are inferred from `cacheRead`/`cacheWrite` counters, not documented as a contract.
+## 7. Effect size, pilot output, and confirmatory sample
 
-Two candidate treatments:
+**Decision: 10% is the smallest total-cost reduction worth acting on; the pilot exposes dispersion, not effect.**
 
-1. **No attribution.** Compare arm totals and say nothing about which component caused the difference. The comparison stays valid; it just does not explain itself. Component-level totals are still reported descriptively.
-2. **Component decomposition with a stated assumption.** Report the per-component difference and state explicitly that the cache-write component is not attributable to individual compressions.
+The owner fixed 10% before any pilot result. For the primary contrast, the confirmatory estimand is the paired per-task log-cost difference:
 
-Option 1 is the safe default and is what a first study should do. Option 2 requires an assumption about provider cache behavior that this project cannot currently verify, and adopting it would smuggle an unverified provider model into a headline number. **This is recorded as unresolved rather than decided**: it must be settled, in writing, before a study runs, and a study that reports per-component attribution without settling it is invalid.
+`d(t) = log(mean_laconic(t)) - log(mean_native(t))`
 
-## 7. Effect size and sample
+The log scale maps the 10% product threshold directly and prevents one expensive task from outweighing many cheaper tasks. Headroom uses a separately labelled paired log-cost difference and is not part of the primary power calculation.
 
-**Unresolved as a specific number; the procedure for fixing it is decided.**
+The required sequence is:
 
-The threshold cannot be chosen from the composition report, because that report has no variance estimate for a repeated task — it has one observation per session and no session was ever repeated. Choosing an effect size from it would be choosing it from data.
+1. Run the frozen four-task, two-repeat, three-arm pilot.
+2. Require all 24 cells to complete and pass their oracles. Any missing cell, differential completion, mechanism failure, state drift, spend-cap refusal, or unparseable usage yields an incomplete disposition and no variance output.
+3. Keep arm means, absolute differences, paired effect estimates, and per-arm cost components in private analysis state. Publish only the standard deviation of the paired task differences, the cross-arm cost correlation, completeness/mechanism counters, frozen parameters, and the sample-feasibility output.
+4. Compute a preliminary task count for the primary Laconic/native confirmatory study at two-sided alpha 0.05 and power 0.80, using the frozen 10% log threshold and the pilot `SD(d)`. The calculation assumes the confirmatory study keeps the pilot's two repetitions per task; changing *k* requires a new variance model rather than reusing this task count. State the approximation and round up.
+5. If the required sample or projected spend is operationally infeasible, stop. If feasible, write and commit a new confirmatory manifest and obtain a new explicit spend authorization before any confirmatory arm.
 
-**Fix the estimand first.** §4 makes the metric total modelled cost per task run in USD, but a threshold stated as "an X% reduction" is a different quantity, and powering one while testing the other is incoherent. The estimand is the **paired per-task log-cost difference**, `d(t) = log(mean_on(t)) - log(mean_off(t))`, so that a threshold expressed as a percentage maps onto it directly and a task costing ten dollars does not outweigh ten tasks costing one. Absolute USD differences are reported alongside, descriptively.
+The pilot is not a performance result. Its point estimate is not reported, quoted, used to select tasks, or used to change the 10% threshold.
 
-The required sequence, in order:
+## 8. Falsification and stopping
 
-1. **Pilot both arms.** Run *n* tasks, *k* times each, **in both arms** — this is the correction that matters. A paired test's power is governed by the standard deviation of the within-pair difference `d(t)`, which cancels between-task cost variance entirely and depends on the cross-arm correlation. A codec-off-only pilot measures precisely the dispersion that pairing removes, so feeding its coefficient of variation into a paired power calculation either wildly overstates the sample or silently assumes a correlation nobody measured. Report `SD(d)` and the cross-arm correlation. Publish nothing else from the pilot: it is a variance estimate, not a result, and its point estimate of the effect is not reported, quoted, or used.
-2. **State the smallest effect worth acting on.** This is a product decision, not a statistical one: below what percentage reduction in total cost, on this workload, would nobody install the thing? Write it down before step 3, and — because the pilot has by then produced an effect estimate whether or not it is looked at — have someone who has not seen the pilot's arms write it down.
-3. **Compute the sample** from `SD(d)` and that threshold, for a paired design at conventional power, and write the resulting *n* and *k* down. Note that *k* enters twice: it shrinks the within-cell noise in each `mean_on(t)`/`mean_off(t)` before pairing, so the trade between more tasks and more repeats is explicit rather than incidental.
-4. **If the required sample exceeds what one owner can generate**, say so and stop. That is a legitimate and likely outcome, and it is a better result than an underpowered study reporting a number.
+The later confirmatory hypothesis is: *for tasks from the pre-registered workload, Laconic reduces total OMP-modelled cost per completed task by at least the product-relevant threshold without reducing completion.*
 
-Recording the honest expectation: a local run of `laconic research spend report` over the author's own sessions at the time of writing put cache reads near 70% of spend both across the corpus and within codec-active sessions, with a few tens of thousands of characters avoided across a couple of hundred eligible observations. Those figures are not reproducible from this repository — they describe one machine's private sessions at one moment, and the report they come from is written to a git-ignored directory. They are cited only as the order of magnitude that shaped this design. Nothing in that picture suggests a large effect, and the variance in per-task agent cost is likely to be substantial. Step 4 firing is a realistic outcome of this design, not a failure of it.
+The variance pilot does not test that hypothesis. It stops without an effect estimate if any frozen validity condition fails: a task tree or prompt drifts; an arm does not use the pinned model/configuration; completion differs; a Laconic or Headroom mechanism cannot be verified; usage is missing; the gateway cannot reserve spend before forwarding; a request would exceed $10; live OMP or dogfood state changes; or private data reaches a public artifact.
 
-## 8. Falsification
-
-The hypothesis under test is: *for tasks of this kind, running with the codec enabled reduces total modelled cost per task run.*
-
-It is falsified if any of these holds on the pre-registered analysis:
-
-- the paired estimate is zero or favors codec-off, with the confidence interval excluding the pre-registered threshold;
-- the confidence interval lies wholly inside the equivalence bounds set by that threshold — an equivalence result, which is a real answer and must be reported as one rather than as "no significant difference";
-- the codec arm completes fewer tasks than the codec-off arm by more than a pre-registered tolerance, in which case cost is not comparable at all because the arms did different amounts of work;
-- any arm's model is unpriced, any task's repository state drifted between arms, or any run exceeded its step budget in one arm only.
-
-A null or negative result terminates the savings claim for this workload. It does not terminate the product: the runtime beta's gate is safety, not savings, and `docs/grounding.md` already separates the two.
+A future confirmatory result falsifies the product-relevant savings claim for this workload if the pre-registered interval favors native OMP or lies wholly inside the ±10% equivalence bounds, or if Laconic completes fewer tasks than the frozen tolerance permits. A null or negative result does not terminate the runtime product: its beta gate is safety, not savings.
 
 ## 9. Authorization
 
-A comparison may not run until all of the following are true, and each is a separate condition:
+The pilot may run only when every condition below is satisfied:
 
-1. The owner issues a fresh explicit instruction to implement and run it. Nothing in M19, and nothing in this document, constitutes that instruction.
-2. The pre-registration — task list, *k*, metric, price table, effect-size threshold, sample, stopping rule, and the §6 cache-attribution decision — is written and committed **before** the first arm executes.
-3. A spend cap is set and enforced in the harness, not by intention. Real provider calls cost real money, and a runaway agent arm is the expected failure.
-4. The comparison runs in disposable repositories at pinned commits, never against the owner's live work, and never by disabling the codec in the owner's ordinary sessions.
-5. The dogfood collection running today is not interrupted, reconfigured, or used as an arm.
+1. **Satisfied — informed sign-off and fresh instruction.** H-99 records the owner's review of the M19 composition/limitations/privacy/design packet and the explicit instruction to implement and run the recommended comparison.
+2. **Pending until committed — pilot pre-registration.** The manifest must pin all tasks, repeats, 24 arm orders, model/catalog, price authority, metric, estimator, 10% threshold, limits, privacy schema, $10 cap, and stopping rules before the credential probe or first paid arm.
+3. **Pending until verified — enforced cap.** The gateway must reserve a conservative request maximum before forwarding and refuse a request that could exceed $10. Intention, wall-clock timeout, or post-run accounting is not enforcement.
+4. **Required — disposable isolation.** Every arm runs in an owner-only isolated OMP directory and disposable Git repository. It never changes the owner's live OMP profile, worktree, runtime ledger store, or ordinary sessions.
+5. **Required — uninterrupted dogfood.** The collection already running is neither disabled nor used as an arm. Before/after state digests and `laconic-dogfood-check` must remain clean.
 
-## 10. What this document does not do
+The confirmatory study is not authorized by satisfying these pilot conditions.
 
-It does not implement anything. There is no harness, no task list, no pre-registration, and no pilot. It states what would have to be true for a savings claim to be defensible, so that the decision to pursue one — or to decline to — is made deliberately rather than by drifting into it.
+## 10. What this document authorizes
+
+This design authorizes implementation of the bounded harness and one frozen variance pilot under H-99. It does not authorize a confirmatory run, post-result tuning or restarts, public arm costs or effect estimates, a token/cost savings claim, a Laconic-versus-Headroom superiority claim, `laconic.costs` repricing, release preparation, tagging, or publication.
