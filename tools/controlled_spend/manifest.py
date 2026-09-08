@@ -33,6 +33,7 @@ COMPLETION_COMMAND: Final = (
 RANDOM_SEED: Final = "3afb17d44bef47718e656f95831877644a1f92e2b154eab2c7ef753a46972fd0"
 STOPPING_RULES: Final = (
     "request_reservation_exceeds_total_cap",
+    "per_run_request_limit_reached",
     "provider_usage_missing_or_malformed",
     "task_completion_failed",
     "arm_mechanism_unverified",
