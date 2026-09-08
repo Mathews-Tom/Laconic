@@ -1,0 +1,616 @@
+"""Isolated three-arm execution for the frozen M20 variance pilot."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import signal
+import socket
+import sqlite3
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Final, cast
+
+from laconic.runtime.omp_installer import apply_omp_install
+from tools.controlled_spend.budget_gateway import BudgetGateway, GatewaySnapshot
+from tools.controlled_spend.manifest import (
+    DEFAULT_MANIFEST_PATH,
+    Arm,
+    PilotManifest,
+    RunSpec,
+    canonical_json,
+    manifest_digest,
+    materialize_task,
+    tree_digest,
+    validate_manifest_file,
+)
+
+_OMP_BINARY: Final = "omp"
+_HEADROOM_PACKAGE: Final = "headroom-ai[proxy]==0.37.0"
+_STATE_FILE: Final = "campaign-state.json"
+_RECEIPT_FILE: Final = "gateway-receipts.jsonl"
+_CREDENTIAL_SNAPSHOT: Final = "credential-snapshot.db"
+_RUN_RESULT: Final = "run-result.json"
+
+_ENVIRONMENT_KEYS_TO_CLEAR: Final = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_FOUNDRY_API_KEY",
+        "ANTHROPIC_FOUNDRY_BASE_URL",
+        "ANTHROPIC_OAUTH_TOKEN",
+        "ANTHROPIC_TARGET_API_URL",
+        "CLAUDE_CODE_CLIENT_CERT",
+        "CLAUDE_CODE_CLIENT_KEY",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "FOUNDRY_BASE_URL",
+        "LACONIC_DATA_DIR",
+        "OMP_PROFILE",
+        "PI_PROFILE",
+    }
+)
+
+
+class PilotRunnerError(RuntimeError):
+    """Raised when the controlled pilot cannot continue safely."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessResult:
+    returncode: int
+    timed_out: bool
+    wall_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    run_id: str
+    arm: Arm
+    process: ProcessResult
+    completion_passed: bool
+    fixture_guards_passed: bool
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.process.returncode == 0
+            and not self.process.timed_out
+            and self.completion_passed
+            and self.fixture_guards_passed
+        )
+
+
+def _validate_private_directory(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise PilotRunnerError(f"cannot inspect private directory: {path}") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise PilotRunnerError(f"private path is not an ordinary directory: {path}")
+    if metadata.st_uid != os.getuid():
+        raise PilotRunnerError(f"private directory has a different owner: {path}")
+    if metadata.st_mode & 0o777 != 0o700:
+        raise PilotRunnerError(f"private directory must have mode 0700: {path}")
+
+
+def _make_private_directory(path: Path, *, root: Path | None = None) -> None:
+    if root is not None:
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise PilotRunnerError("private child escapes campaign root") from error
+        _validate_private_directory(root)
+    if path.exists():
+        _validate_private_directory(path)
+        return
+    path.mkdir(parents=True, mode=0o700)
+    os.chmod(path, 0o700)
+    _validate_private_directory(path)
+
+
+def _atomic_private_json(path: Path, payload: dict[str, Any]) -> None:
+    _validate_private_directory(path.parent)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(canonical_json(payload))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def snapshot_agent_database(source: Path, destination: Path) -> str:
+    """Create one transactionally consistent, owner-only SQLite snapshot."""
+    try:
+        metadata = source.lstat()
+    except OSError as error:
+        raise PilotRunnerError("OMP credential database is unavailable") from error
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise PilotRunnerError("OMP credential database must be an owner-controlled ordinary file")
+    if destination.exists():
+        raise PilotRunnerError("credential snapshot already exists")
+    _validate_private_directory(destination.parent)
+    descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    os.close(descriptor)
+    try:
+        source_uri = f"{source.resolve(strict=True).as_uri()}?mode=ro"
+        with sqlite3.connect(source_uri, uri=True) as source_db:
+            with sqlite3.connect(destination) as destination_db:
+                source_db.backup(destination_db)
+                result = destination_db.execute("PRAGMA quick_check").fetchone()
+        if result != ("ok",):
+            raise PilotRunnerError("credential snapshot failed SQLite quick_check")
+        os.chmod(destination, 0o600)
+        return _sha256(destination)
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def _copy_credential_snapshot(snapshot: Path, destination: Path) -> None:
+    if destination.exists():
+        raise PilotRunnerError("isolated credential database already exists")
+    descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with snapshot.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                os.write(descriptor, block)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_models_override(agent_dir: Path, gateway_url: str) -> None:
+    models_path = agent_dir / "models.yml"
+    body = f'providers:\n  anthropic:\n    baseUrl: "{gateway_url}"\n'
+    descriptor = os.open(models_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, body.encode("utf-8"))
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _base_omp_args(
+    manifest: PilotManifest,
+    *,
+    prompt: str,
+    worktree: Path,
+    session_dir: Path,
+) -> list[str]:
+    omp = cast(dict[str, Any], manifest.payload["omp"])
+    limits = cast(dict[str, Any], manifest.payload["limits"])
+    return [
+        "-p",
+        prompt,
+        "--model",
+        f"{omp['provider']}/{omp['model']}",
+        "--mode",
+        "json",
+        "--cwd",
+        str(worktree),
+        "--session-dir",
+        str(session_dir),
+        "--tools",
+        "read,bash,edit,write,grep,glob",
+        "--thinking",
+        cast(str, omp["thinking"]),
+        "--no-lsp",
+        "--no-pty",
+        "--no-skills",
+        "--no-rules",
+        "--no-title",
+        "--max-time",
+        str(limits["wall_seconds_per_run"]),
+        "--auto-approve",
+        "--no-prewalk",
+        "--no-extensions",
+    ]
+
+
+def _available_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return cast(int, probe.getsockname()[1])
+
+
+def build_run_command(
+    manifest: PilotManifest,
+    run: RunSpec,
+    *,
+    prompt: str,
+    worktree: Path,
+    session_dir: Path,
+    extension_path: Path | None = None,
+    headroom_port: int | None = None,
+) -> list[str]:
+    args = _base_omp_args(
+        manifest,
+        prompt=prompt,
+        worktree=worktree,
+        session_dir=session_dir,
+    )
+    if run.arm == "laconic":
+        if extension_path is None:
+            raise PilotRunnerError("Laconic arm requires its explicit extension")
+        args.extend(["-e", str(extension_path)])
+    if run.arm == "headroom":
+        if headroom_port is None:
+            raise PilotRunnerError("Headroom arm requires a proxy port")
+        return [
+            "uvx",
+            "--from",
+            _HEADROOM_PACKAGE,
+            "headroom",
+            "wrap",
+            "omp",
+            "--port",
+            str(headroom_port),
+            "--",
+            *args,
+        ]
+    return [_OMP_BINARY, *args]
+
+
+def build_run_environment(
+    run: RunSpec,
+    *,
+    agent_dir: Path,
+    run_root: Path,
+    gateway_url: str,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    for key in tuple(env):
+        if key in _ENVIRONMENT_KEYS_TO_CLEAR or key.startswith("HEADROOM_"):
+            env.pop(key)
+    env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    env["PI_NO_PTY"] = "1"
+    env["NO_COLOR"] = "1"
+    if run.arm == "headroom":
+        headroom_root = run_root / "headroom"
+        _make_private_directory(headroom_root, root=run_root)
+        env.update(
+            {
+                "ANTHROPIC_TARGET_API_URL": gateway_url,
+                "DO_NOT_TRACK": "1",
+                "HEADROOM_BEACON": "off",
+                "HEADROOM_LOG_FILE": str(headroom_root / "requests.jsonl"),
+                "HEADROOM_LOG_MESSAGES": "off",
+                "HEADROOM_WORKSPACE_DIR": str(headroom_root),
+            }
+        )
+    return env
+
+
+def _run_process(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> ProcessResult:
+    started = time.monotonic()
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds + 15)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+    for path, content in ((stdout_path, stdout), (stderr_path, stderr)):
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            os.write(descriptor, content)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    return ProcessResult(
+        returncode=process.returncode,
+        timed_out=timed_out,
+        wall_seconds=time.monotonic() - started,
+    )
+
+
+def _completion_passed(command: tuple[str, ...], cwd: Path) -> bool:
+    completed = subprocess.run(
+        (sys.executable, *command[1:]),
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _guard_fixture_files(original_source: Path, worktree: Path) -> bool:
+    return _sha256(original_source / "diagnose.py") == _sha256(
+        worktree / "diagnose.py"
+    ) and tree_digest(original_source / "tests") == tree_digest(worktree / "tests")
+
+
+def _run_payload(result: RunResult, gateway: GatewaySnapshot) -> dict[str, Any]:
+    return {
+        "arm": result.arm,
+        "completion_passed": result.completion_passed,
+        "fixture_guards_passed": result.fixture_guards_passed,
+        "gateway_halted_reason": gateway.halted_reason,
+        "gateway_request_count": gateway.request_count,
+        "gateway_spent_usd": format(gateway.spent_usd, "f"),
+        "passed": result.passed,
+        "process_returncode": result.process.returncode,
+        "process_timed_out": result.process.timed_out,
+        "run_id": result.run_id,
+        "wall_seconds": result.process.wall_seconds,
+    }
+
+
+def _preflight_binary(command: list[str], expected: str, label: str) -> None:
+    try:
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PilotRunnerError(f"{label} preflight failed") from error
+    output = (completed.stdout + completed.stderr).decode("utf-8", errors="replace")
+    if completed.returncode != 0 or expected not in output:
+        raise PilotRunnerError(f"{label} version differs from the frozen manifest")
+
+
+def preflight_environment(manifest: PilotManifest) -> None:
+    omp = cast(dict[str, Any], manifest.payload["omp"])
+    headroom = cast(dict[str, Any], manifest.payload["headroom"])
+    _preflight_binary([_OMP_BINARY, "--version"], f"omp/{omp['version']}", "OMP")
+    _preflight_binary(
+        ["uvx", "--from", _HEADROOM_PACKAGE, "headroom", "--version"],
+        cast(str, headroom["version"]),
+        "Headroom",
+    )
+
+
+def _credential_preflight(agent_dir: Path, output_path: Path) -> None:
+    env = dict(os.environ)
+    env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    completed = subprocess.run(
+        [_OMP_BINARY, "usage", "--provider", "anthropic", "--json", "--redact"],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    descriptor = os.open(
+        output_path,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    try:
+        os.write(descriptor, completed.stdout)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        payload = json.loads(completed.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PilotRunnerError(
+            "isolated Anthropic credential preflight returned invalid JSON"
+        ) from error
+    if completed.returncode != 0 or not payload:
+        raise PilotRunnerError("isolated Anthropic credential preflight failed")
+
+
+def cleanup_agent_directory(agent_dir: Path) -> None:
+    """Delete the isolated credential database and every SQLite sidecar."""
+    if agent_dir.is_symlink() or not agent_dir.is_dir():
+        raise PilotRunnerError("isolated agent directory is not an ordinary directory")
+    shutil.rmtree(agent_dir)
+    if agent_dir.exists() or agent_dir.is_symlink():
+        raise PilotRunnerError("private credential cleanup failed")
+
+
+def _execute_run(
+    manifest: PilotManifest,
+    run: RunSpec,
+    *,
+    campaign_root: Path,
+    credential_snapshot: Path,
+    gateway: BudgetGateway,
+) -> RunResult:
+    run_root = campaign_root / "runs" / run.run_id
+    _make_private_directory(run_root, root=campaign_root)
+    worktree = run_root / "worktree"
+    task = next(task for task in manifest.tasks if task.task_id == run.task_id)
+    materialize_task(task, worktree)
+    original_source = DEFAULT_MANIFEST_PATH.parent / "fixtures" / task.task_id / task.source_dir
+
+    agent_dir = run_root / "agent"
+    session_dir = run_root / "sessions"
+    _make_private_directory(agent_dir, root=run_root)
+    _make_private_directory(session_dir, root=run_root)
+    isolated_db = agent_dir / "agent.db"
+    _copy_credential_snapshot(credential_snapshot, isolated_db)
+    gateway_url = gateway.base_url(run.run_id)
+    extension_path: Path | None = None
+    headroom_port: int | None = None
+    if run.arm == "headroom":
+        headroom_port = _available_loopback_port()
+    else:
+        _write_models_override(agent_dir, gateway_url)
+        if run.arm == "laconic":
+            installation = apply_omp_install(
+                agent_dir / "extensions",
+                python=sys.executable,
+                data_directory=run_root / "laconic-data",
+            )
+            extension_path = installation.plan.path
+    prompt_path = DEFAULT_MANIFEST_PATH.parent / "fixtures" / task.task_id / task.prompt_file
+    prompt = prompt_path.read_text(encoding="utf-8")
+    command = build_run_command(
+        manifest,
+        run,
+        prompt=prompt,
+        worktree=worktree,
+        session_dir=session_dir,
+        extension_path=extension_path,
+        headroom_port=headroom_port,
+    )
+    env = build_run_environment(
+        run,
+        agent_dir=agent_dir,
+        run_root=run_root,
+        gateway_url=gateway_url,
+    )
+    limits = cast(dict[str, Any], manifest.payload["limits"])
+    try:
+        process = _run_process(
+            command,
+            cwd=worktree,
+            env=env,
+            timeout_seconds=cast(int, limits["wall_seconds_per_run"]),
+            stdout_path=run_root / "stdout.jsonl",
+            stderr_path=run_root / "stderr.log",
+        )
+        completion_passed = _completion_passed(task.completion_command, worktree)
+        fixture_guards_passed = _guard_fixture_files(original_source, worktree)
+        result = RunResult(
+            run_id=run.run_id,
+            arm=run.arm,
+            process=process,
+            completion_passed=completion_passed,
+            fixture_guards_passed=fixture_guards_passed,
+        )
+        _atomic_private_json(
+            run_root / _RUN_RESULT,
+            _run_payload(result, gateway.ledger.snapshot()),
+        )
+        return result
+    finally:
+        cleanup_agent_directory(agent_dir)
+
+
+def run_campaign(
+    artifact_root: Path,
+    *,
+    live_agent_database: Path | None = None,
+) -> dict[str, Any]:
+    """Execute the frozen population once; any invalid cell terminates the campaign."""
+    manifest = validate_manifest_file()
+    preflight_environment(manifest)
+    root = artifact_root.expanduser().absolute()
+    if root.exists():
+        raise PilotRunnerError("artifact root already exists; pilot re-runs are not automatic")
+    root.mkdir(parents=True, mode=0o700)
+    os.chmod(root, 0o700)
+    _validate_private_directory(root)
+    _make_private_directory(root / "runs", root=root)
+
+    source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
+    credential_snapshot = root / _CREDENTIAL_SNAPSHOT
+    credential_sha = snapshot_agent_database(source_db, credential_snapshot)
+    state_path = root / _STATE_FILE
+    state: dict[str, Any] = {
+        "completed_runs": [],
+        "credential_snapshot_sha256": credential_sha,
+        "manifest_hash": manifest_digest(),
+        "schema_version": 1,
+        "status": "preflight",
+    }
+    _atomic_private_json(state_path, state)
+
+    try:
+        preflight_agent_dir = root / "credential-preflight"
+        _make_private_directory(preflight_agent_dir, root=root)
+        preflight_db = preflight_agent_dir / "agent.db"
+        _copy_credential_snapshot(credential_snapshot, preflight_db)
+        try:
+            _credential_preflight(preflight_agent_dir, root / "credential-preflight.json")
+            os.replace(preflight_db, credential_snapshot)
+            os.chmod(credential_snapshot, 0o600)
+            state["credential_snapshot_sha256"] = _sha256(credential_snapshot)
+        except BaseException:
+            state["status"] = "incomplete"
+            state["gateway_halted_reason"] = "credential_preflight_failed"
+            _atomic_private_json(state_path, state)
+            raise
+        finally:
+            shutil.rmtree(preflight_agent_dir)
+
+        state["status"] = "running"
+        _atomic_private_json(state_path, state)
+        with BudgetGateway(manifest, root / _RECEIPT_FILE) as gateway:
+            for run in manifest.run_order:
+                result = _execute_run(
+                    manifest,
+                    run,
+                    campaign_root=root,
+                    credential_snapshot=credential_snapshot,
+                    gateway=gateway,
+                )
+                snapshot = gateway.ledger.snapshot()
+                if not result.passed or snapshot.halted_reason is not None:
+                    state["status"] = "incomplete"
+                    state["failed_run"] = run.run_id
+                    state["gateway_halted_reason"] = snapshot.halted_reason
+                    _atomic_private_json(state_path, state)
+                    raise PilotRunnerError(f"pilot stopped at invalid cell {run.run_id}")
+                cast(list[str], state["completed_runs"]).append(run.run_id)
+                _atomic_private_json(state_path, state)
+            final_snapshot = gateway.ledger.snapshot()
+        state["status"] = "completed"
+        state["gateway_spent_usd"] = format(final_snapshot.spent_usd, "f")
+        _atomic_private_json(state_path, state)
+        return state
+    except BaseException:
+        if state["status"] == "running":
+            state["status"] = "interrupted"
+            _atomic_private_json(state_path, state)
+        raise
+    finally:
+        credential_snapshot.unlink(missing_ok=True)
+        if credential_snapshot.exists():
+            state["status"] = "incomplete"
+            state["gateway_halted_reason"] = "private_artifact_cleanup_failed"
+            _atomic_private_json(state_path, state)
