@@ -20,6 +20,11 @@ from typing import Any, Final, cast
 
 from laconic.runtime.omp_installer import apply_omp_install
 from laconic.runtime.storage import resolve_data_dir
+from tools.controlled_spend.authorization import (
+    ExecutionAuthorization,
+    consume_execution_authorization,
+    verify_execution_authorization,
+)
 from tools.controlled_spend.budget_gateway import BudgetGateway, GatewaySnapshot
 from tools.controlled_spend.manifest import (
     FIXTURES_ROOT,
@@ -668,32 +673,37 @@ def _execute_run(
         cleanup_agent_directory(agent_dir)
 
 
+def live_state_roots(live_agent_database: Path | None = None) -> dict[str, Path]:
+    """Return the live roots a campaign must leave byte-identical."""
+    source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
+    return {
+        "laconic_runtime": resolve_data_dir(),
+        "omp_agent": source_db.expanduser().absolute().parent,
+    }
+
+
 def run_campaign(
     artifact_root: Path,
     *,
     manifest: PilotManifest,
+    authorization: ExecutionAuthorization,
     live_agent_database: Path | None = None,
 ) -> dict[str, Any]:
-    """Execute the selected frozen population once."""
-    if (
-        manifest.payload["schema_version"] == 2
-        and manifest.payload.get("execution_authorized") is not True
-    ):
-        raise PilotRunnerError("selected M20-v2 manifest does not authorize provider execution")
+    """Execute the selected frozen population once under one external authorization."""
+    if manifest.payload["schema_version"] != 2:
+        raise PilotRunnerError("M20-v1 campaign execution is permanently closed")
     root = artifact_root.expanduser().absolute()
+    verify_execution_authorization(authorization, manifest=manifest, artifact_root=root)
     source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
-    live_roots = {
-        "laconic_runtime": resolve_data_dir(),
-        "omp_agent": source_db.expanduser().absolute().parent,
-    }
+    live_roots = live_state_roots(live_agent_database)
     if any(
         root == live_root or root.is_relative_to(live_root) for live_root in live_roots.values()
     ):
         raise PilotRunnerError("artifact root must be outside every live-state root")
-    live_before = {name: tree_state_digest(path) for name, path in live_roots.items()}
-    preflight_environment(manifest)
     if root.exists():
         raise PilotRunnerError("artifact root already exists; pilot re-runs are not automatic")
+    live_before = {name: tree_state_digest(path) for name, path in live_roots.items()}
+    preflight_environment(manifest)
     root.mkdir(parents=True, mode=0o700)
     os.chmod(root, 0o700)
     _validate_private_directory(root)
@@ -703,6 +713,8 @@ def run_campaign(
     credential_sha = snapshot_agent_database(source_db, credential_snapshot)
     state_path = root / _STATE_FILE
     state: dict[str, Any] = {
+        "authorization_id": authorization.authorization_id,
+        "authorization_sha256": authorization.receipt_sha256,
         "completed_runs": [],
         "credential_snapshot_sha256": credential_sha,
         "live_state_before": live_before,
@@ -713,6 +725,7 @@ def run_campaign(
     _atomic_private_json(state_path, state)
 
     try:
+        consume_execution_authorization(authorization)
         preflight_agent_dir = root / "credential-preflight"
         _make_private_directory(preflight_agent_dir, root=root)
         preflight_db = preflight_agent_dir / "agent.db"
