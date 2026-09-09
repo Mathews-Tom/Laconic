@@ -5,11 +5,16 @@ from pathlib import Path
 from typing import Any
 
 from tools.controlled_spend.analysis import check_report, generate_report
+from tools.controlled_spend.authorization import load_execution_authorization
 from tools.controlled_spend.manifest import (
     validate_manifest_file,
     verify_completion_oracles,
 )
-from tools.controlled_spend.runner import preflight_environment, run_campaign
+from tools.controlled_spend.runner import (
+    live_state_roots,
+    preflight_environment,
+    run_campaign,
+)
 
 
 def _add_manifest_argument(parser: argparse.ArgumentParser) -> None:
@@ -30,6 +35,7 @@ def _parser() -> argparse.ArgumentParser:
     _add_manifest_argument(preflight)
     run = pilot_commands.add_parser("run", help="execute every selected frozen cell once")
     _add_manifest_argument(run)
+    run.add_argument("--authorization", type=Path, required=True)
     run.add_argument("--artifact-root", type=Path, required=True)
     report = pilot_commands.add_parser("report", help="generate public pilot artifacts")
     _add_manifest_argument(report)
@@ -76,7 +82,17 @@ def main() -> int:
         return 0
     if args.command == "pilot" and args.pilot_command == "run":
         manifest = validate_manifest_file(args.manifest)
-        state = run_campaign(args.artifact_root, manifest=manifest)
+        authorization = load_execution_authorization(
+            args.authorization,
+            manifest=manifest,
+            artifact_root=args.artifact_root,
+            excluded_roots=tuple(live_state_roots().values()),
+        )
+        state = run_campaign(
+            args.artifact_root,
+            manifest=manifest,
+            authorization=authorization,
+        )
         print(
             f"status={state['status']} completed={len(state['completed_runs'])} "
             f"spend_usd={state['gateway_spent_usd']}"

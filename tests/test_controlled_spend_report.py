@@ -732,3 +732,25 @@ def test_v2_cli_report_and_check_render_cell_progress(
     )
     assert cli_module.main() == 0
     assert "cells=24/24 attempted=24 report=verified" in capsys.readouterr().out
+
+
+def test_public_v2_artifacts_never_carry_execution_authorization(tmp_path: Path) -> None:
+    artifacts = tmp_path / "private"
+    manifest = _seed_campaign(artifacts, manifest_path=DEFAULT_V2_MANIFEST_PATH)
+    state_path = artifacts / "campaign-state.json"
+    state = json.loads(state_path.read_text())
+    state["authorization_id"] = "d4" * 32
+    state["authorization_sha256"] = "e5" * 32
+    _write_json(state_path, state)
+    report_json = tmp_path / "report-v2.json"
+    report_markdown = tmp_path / "report-v2.md"
+
+    report = generate_report(artifacts, report_json, report_markdown, manifest=manifest)
+
+    assert set(report) == set(manifest.payload["public_report_keys"])
+    for artifact in (report_json, report_markdown):
+        text = artifact.read_text()
+        assert "d4" * 32 not in text
+        assert "e5" * 32 not in text
+        assert "authorization_id" not in text
+        assert "authorization_sha256" not in text
