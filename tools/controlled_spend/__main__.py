@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 from tools.controlled_spend.analysis import check_report, generate_report
 from tools.controlled_spend.manifest import (
@@ -43,6 +44,17 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _report_progress(report: dict[str, Any], *, schema_version: int) -> str:
+    if schema_version == 1:
+        return f"runs={report['run_count']}/{report['expected_run_count']}"
+    if schema_version == 2:
+        return (
+            f"cells={report['valid_cells']}/{report['expected_cell_count']} "
+            f"attempted={report['attempted_cells']}"
+        )
+    raise AssertionError("unsupported controlled-spend schema")
+
+
 def main() -> int:
     args = _parser().parse_args()
     if args.command == "manifest" and args.manifest_command == "check":
@@ -79,8 +91,9 @@ def main() -> int:
             manifest=manifest,
         )
         print(
-            f"verdict={report['verdict']} runs={report['run_count']}/"
-            f"{report['expected_run_count']} spend_usd={report['gateway_spend_usd']}"
+            f"verdict={report['verdict']} "
+            f"{_report_progress(report, schema_version=manifest.payload['schema_version'])} "
+            f"spend_usd={report['gateway_spend_usd']}"
         )
         return 0
     if args.command == "pilot" and args.pilot_command == "check":
@@ -92,8 +105,9 @@ def main() -> int:
             manifest=manifest,
         )
         print(
-            f"verdict={report['verdict']} runs={report['run_count']}/"
-            f"{report['expected_run_count']} report=verified"
+            f"verdict={report['verdict']} "
+            f"{_report_progress(report, schema_version=manifest.payload['schema_version'])} "
+            "report=verified"
         )
         return 0
     raise AssertionError("unreachable command")

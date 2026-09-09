@@ -69,9 +69,11 @@ The runner executes `python3 diagnose.py` against each materialized task before 
 
 The shared loopback gateway reserves each request's conservative maximum before forwarding. It accepts at most 16 requests per cell, refuses the 17th, retains the 180-second wall limit, charges the reservation if usage is missing or malformed, and never permits cumulative spent plus outstanding reservations to exceed $10.
 
+The committed candidate manifest hash is `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`; its `execution_authorized` field remains `false`. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
+
 Preflight and report/check are no-provider operations. `pilot run` must fail while the manifest's execution authorization is false. Do not probe credentials or attempt execution in the readiness session.
 
-## Recorded disposition
+## M20-v1 recorded disposition
 
 The authorized campaign ran once and stopped under the frozen invalid-cell rule. The generated [public disposition](results/controlled-spend-pilot.md) is the canonical record of its validity counts and gateway spend. Dispersion, correlations, and confirmatory task count are null. The live OMP and Laconic runtime tree digests matched before and after, the credential snapshot was deleted, and the post-run dogfood check passed.
 

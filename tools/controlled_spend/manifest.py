@@ -18,6 +18,7 @@ from typing import Any, Final, Literal, cast
 Arm = Literal["native", "laconic", "headroom"]
 ARMS: Final[tuple[Arm, ...]] = ("native", "laconic", "headroom")
 SCHEMA_VERSION: Final = 1
+V2_SCHEMA_VERSION: Final = 2
 TASK_COUNT: Final = 4
 REPEATS: Final = 2
 TASK_IDS: Final = ("t01", "t02", "t03", "t04")
@@ -31,6 +32,7 @@ COMPLETION_COMMAND: Final = (
     "-q",
 )
 RANDOM_SEED: Final = "3afb17d44bef47718e656f95831877644a1f92e2b154eab2c7ef753a46972fd0"
+V2_RANDOM_SEED: Final = "59fb6151309c3d6e0dd5ae4031444d2b8ba1d5a6fa03ecd1e07e213b574126a3"
 STOPPING_RULES: Final = (
     "request_reservation_exceeds_total_cap",
     "per_run_request_limit_reached",
@@ -41,6 +43,7 @@ STOPPING_RULES: Final = (
     "live_state_changed",
     "private_artifact_cleanup_failed",
 )
+V2_STOPPING_RULES: Final = ("runner_diagnosis_failed", *STOPPING_RULES)
 PUBLIC_REPORT_KEYS: Final = (
     "schema_version",
     "manifest_hash",
@@ -59,9 +62,31 @@ PUBLIC_REPORT_KEYS: Final = (
     "total_cap_usd",
     "gateway_spend_usd",
 )
+V2_PUBLIC_REPORT_KEYS: Final = (
+    "schema_version",
+    "manifest_hash",
+    "verdict",
+    "attempted_cells",
+    "valid_cells",
+    "expected_cell_count",
+    "unrun_cells",
+    "task_completion_failures",
+    "protocol_failures",
+    "mechanism_non_engagement",
+    "paired_log_cost_sd",
+    "native_laconic_correlation",
+    "native_headroom_correlation",
+    "confirmatory_task_count_at_two_repeats",
+    "action_threshold_fraction",
+    "alpha_two_sided",
+    "power",
+    "total_cap_usd",
+    "gateway_spend_usd",
+)
 RUN_COUNT: Final = TASK_COUNT * REPEATS * len(ARMS)
 PACKAGE_ROOT: Final = Path(__file__).resolve().parent
 DEFAULT_MANIFEST_PATH: Final = PACKAGE_ROOT / "pilot-manifest.json"
+DEFAULT_V2_MANIFEST_PATH: Final = PACKAGE_ROOT / "pilot-manifest-v2.json"
 FIXTURES_ROOT: Final = PACKAGE_ROOT / "fixtures"
 _HEX_64: Final = frozenset("0123456789abcdef")
 
@@ -189,7 +214,7 @@ def manifest_digest(path: Path) -> str:
     return hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
-def _parse_tasks(value: Any) -> tuple[TaskSpec, ...]:
+def _parse_tasks(value: Any, *, prompt_file: str) -> tuple[TaskSpec, ...]:
     if not isinstance(value, list) or len(value) != TASK_COUNT:
         raise ManifestError(f"tasks must contain exactly {TASK_COUNT} entries")
     tasks: list[TaskSpec] = []
@@ -230,7 +255,7 @@ def _parse_tasks(value: Any) -> tuple[TaskSpec, ...]:
         )
         if (task.source_dir, task.prompt_file, task.solution_patch) != (
             "seed",
-            "PROMPT.txt",
+            prompt_file,
             "solution.patch",
         ):
             raise ManifestError(f"tasks[{index}] layout differs from the frozen pilot")
@@ -251,7 +276,7 @@ def _parse_tasks(value: Any) -> tuple[TaskSpec, ...]:
     return tuple(tasks)
 
 
-def _parse_runs(value: Any, task_ids: set[str]) -> tuple[RunSpec, ...]:
+def _parse_runs(value: Any, task_ids: set[str], *, random_seed: str) -> tuple[RunSpec, ...]:
     if not isinstance(value, list) or len(value) != RUN_COUNT:
         raise ManifestError(f"run_order must contain exactly {RUN_COUNT} entries")
     runs: list[RunSpec] = []
@@ -281,7 +306,7 @@ def _parse_runs(value: Any, task_ids: set[str]) -> tuple[RunSpec, ...]:
     actual = {(run.task_id, run.repetition, run.arm) for run in runs}
     if actual != expected:
         raise ManifestError("run_order must contain each task/repetition/arm cell exactly once")
-    rng = random.Random(int(RANDOM_SEED, 16))
+    rng = random.Random(int(random_seed, 16))
     expected_order: list[tuple[str, str, int, str]] = []
     for task_id in TASK_IDS:
         for repetition in range(1, REPEATS + 1):
@@ -296,34 +321,50 @@ def _parse_runs(value: Any, task_ids: set[str]) -> tuple[RunSpec, ...]:
 
 
 def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
+    schema_version = payload.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version not in {
+        SCHEMA_VERSION,
+        V2_SCHEMA_VERSION,
+    }:
+        raise ManifestError("manifest schema_version is not supported")
+    common_keys = {
+        "schema_version",
+        "study_id",
+        "phase",
+        "omp",
+        "headroom",
+        "tasks",
+        "arms",
+        "repeats",
+        "random_seed",
+        "run_order",
+        "limits",
+        "analysis",
+        "stopping_rules",
+        "public_report_keys",
+    }
+    is_v2 = schema_version == V2_SCHEMA_VERSION
     _require_exact_keys(
         payload,
-        {
-            "schema_version",
-            "study_id",
-            "phase",
-            "omp",
-            "headroom",
-            "tasks",
-            "arms",
-            "repeats",
-            "random_seed",
-            "run_order",
-            "limits",
-            "analysis",
-            "stopping_rules",
-            "public_report_keys",
-        },
+        common_keys | ({"execution_authorized"} if is_v2 else set()),
         "manifest",
     )
-    if payload["schema_version"] != SCHEMA_VERSION or payload["phase"] != "variance_pilot":
-        raise ManifestError("manifest schema_version/phase is not the frozen pilot contract")
-    if payload["study_id"] != "m20-variance-pilot-v1":
-        raise ManifestError("study_id differs from the frozen pilot")
+    if payload["phase"] != "variance_pilot":
+        raise ManifestError("manifest phase is not the frozen pilot contract")
+    study_id = "m20-variance-pilot-v2" if is_v2 else "m20-variance-pilot-v1"
+    random_seed = V2_RANDOM_SEED if is_v2 else RANDOM_SEED
+    prompt_file = "PROMPT-v2.txt" if is_v2 else "PROMPT.txt"
+    request_limit = 16 if is_v2 else 8
+    stopping_rules = V2_STOPPING_RULES if is_v2 else STOPPING_RULES
+    public_report_keys = V2_PUBLIC_REPORT_KEYS if is_v2 else PUBLIC_REPORT_KEYS
+    if payload["study_id"] != study_id:
+        raise ManifestError("study_id differs from the selected frozen pilot")
+    if is_v2 and payload["execution_authorized"] is not False:
+        raise ManifestError("M20-v2 execution_authorized must remain false")
     if payload["arms"] != list(ARMS) or payload["repeats"] != REPEATS:
         raise ManifestError("arms/repeats differ from the frozen pilot")
-    if _require_hex64(payload["random_seed"], "random_seed") != RANDOM_SEED:
-        raise ManifestError("random_seed differs from the frozen pilot")
+    if _require_hex64(payload["random_seed"], "random_seed") != random_seed:
+        raise ManifestError("random_seed differs from the selected frozen pilot")
 
     omp = _require_object(payload["omp"], "omp")
     _require_exact_keys(
@@ -362,15 +403,16 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
         },
         "omp.catalog",
     )
-    price_keys = (
-        "input_per_mtok",
-        "cache_write_5m_per_mtok",
-        "cache_write_1h_per_mtok",
-        "cache_read_per_mtok",
-        "output_per_mtok",
-    )
-    for key in price_keys:
-        _require_decimal(catalog[key], f"omp.catalog.{key}")
+    if catalog != {
+        "input_per_mtok": "2.00",
+        "cache_write_5m_per_mtok": "2.50",
+        "cache_write_1h_per_mtok": "4.00",
+        "cache_read_per_mtok": "0.20",
+        "output_per_mtok": "10.00",
+        "effective_date": "2026-09-01",
+        "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+    }:
+        raise ManifestError("OMP catalog differs from the frozen price snapshot")
     if hashlib.sha256(canonical_json(catalog)).hexdigest() != _require_hex64(
         omp["catalog_sha256"], "omp.catalog_sha256"
     ):
@@ -394,8 +436,11 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
     )
     if _require_decimal(limits["total_spend_usd"], "limits.total_spend_usd") != Decimal("10.00"):
         raise ManifestError("total spend cap must be exactly 10.00")
-    if limits["provider_requests_per_run"] != 8 or limits["wall_seconds_per_run"] != 180:
-        raise ManifestError("request/time limits differ from the frozen pilot")
+    if (
+        limits["provider_requests_per_run"] != request_limit
+        or limits["wall_seconds_per_run"] != 180
+    ):
+        raise ManifestError("request/time limits differ from the selected frozen pilot")
 
     analysis = _require_object(payload["analysis"], "analysis")
     _require_exact_keys(
@@ -422,15 +467,17 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
     }:
         raise ManifestError("analysis differs from the frozen pilot")
 
-    stopping = payload["stopping_rules"]
-    if stopping != list(STOPPING_RULES):
-        raise ManifestError("stopping_rules differ from the frozen pilot")
-    public_keys = payload["public_report_keys"]
-    if public_keys != list(PUBLIC_REPORT_KEYS):
-        raise ManifestError("public_report_keys differ from the frozen pilot")
+    if payload["stopping_rules"] != list(stopping_rules):
+        raise ManifestError("stopping_rules differ from the selected frozen pilot")
+    if payload["public_report_keys"] != list(public_report_keys):
+        raise ManifestError("public_report_keys differ from the selected frozen pilot")
 
-    tasks = _parse_tasks(payload["tasks"])
-    runs = _parse_runs(payload["run_order"], {task.task_id for task in tasks})
+    tasks = _parse_tasks(payload["tasks"], prompt_file=prompt_file)
+    runs = _parse_runs(
+        payload["run_order"],
+        {task.task_id for task in tasks},
+        random_seed=random_seed,
+    )
     return PilotManifest(payload=payload, tasks=tasks, run_order=runs)
 
 

@@ -4,7 +4,9 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -12,6 +14,7 @@ import tools.controlled_spend.manifest as manifest_module
 from tools.controlled_spend.manifest import (
     ARMS,
     DEFAULT_MANIFEST_PATH,
+    DEFAULT_V2_MANIFEST_PATH,
     RUN_COUNT,
     ManifestError,
     canonical_json,
@@ -22,8 +25,9 @@ from tools.controlled_spend.manifest import (
 )
 
 
-def test_frozen_manifest_and_fixture_oracles_are_complete() -> None:
-    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
+@pytest.mark.parametrize("manifest_path", [DEFAULT_MANIFEST_PATH, DEFAULT_V2_MANIFEST_PATH])
+def test_frozen_manifest_and_fixture_oracles_are_complete(manifest_path: Path) -> None:
+    manifest = validate_manifest_file(manifest_path)
 
     assert len(manifest.tasks) == 4
     assert len(manifest.run_order) == RUN_COUNT
@@ -154,3 +158,54 @@ def test_pilot_cli_requires_explicit_manifest(arguments: tuple[str, ...]) -> Non
 
     assert completed.returncode == 2
     assert "--manifest" in completed.stderr
+
+
+def test_v2_manifest_is_distinct_and_fail_closed() -> None:
+    v1 = validate_manifest_file(DEFAULT_MANIFEST_PATH)
+    v2 = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+
+    assert v1.digest == "a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44"
+    assert v2.digest == "526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f"
+    assert set(v2.payload) - set(v1.payload) == {"execution_authorized"}
+    assert v2.payload["execution_authorized"] is False
+    assert v2.payload["limits"]["provider_requests_per_run"] == 16
+    assert v2.payload["stopping_rules"][0] == "runner_diagnosis_failed"
+    for v1_task, v2_task in zip(v1.tasks, v2.tasks, strict=True):
+        assert v1_task.prompt_file == "PROMPT.txt"
+        assert v2_task.prompt_file == "PROMPT-v2.txt"
+        assert v1_task.prompt_sha256 != v2_task.prompt_sha256
+        v2_prompt = (
+            manifest_module.FIXTURES_ROOT / v2_task.task_id / v2_task.prompt_file
+        ).read_text()
+        assert "diagnose.py" not in v2_prompt
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (
+            lambda payload: payload.__setitem__("execution_authorized", True),
+            "execution_authorized must remain false",
+        ),
+        (
+            lambda payload: payload["limits"].__setitem__("provider_requests_per_run", 8),
+            "request/time limits",
+        ),
+        (
+            lambda payload: payload.__setitem__("random_seed", "0" * 64),
+            "random_seed differs",
+        ),
+        (
+            lambda payload: payload["tasks"][0].__setitem__("prompt_file", "PROMPT.txt"),
+            "layout differs",
+        ),
+    ],
+)
+def test_v2_protocol_drift_is_rejected(
+    mutate: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    payload = json.loads(DEFAULT_V2_MANIFEST_PATH.read_text(encoding="utf-8"))
+    mutate(payload)
+
+    with pytest.raises(ManifestError, match=message):
+        validate_manifest_json(payload)
