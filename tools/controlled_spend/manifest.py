@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 Arm = Literal["native", "laconic", "headroom"]
-ARMS: Final = ("native", "laconic", "headroom")
+ARMS: Final[tuple[Arm, ...]] = ("native", "laconic", "headroom")
 SCHEMA_VERSION: Final = 1
 TASK_COUNT: Final = 4
 REPEATS: Final = 2
@@ -94,6 +94,10 @@ class PilotManifest:
     payload: dict[str, Any]
     tasks: tuple[TaskSpec, ...]
     run_order: tuple[RunSpec, ...]
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(canonical_json(self.payload)).hexdigest()
 
 
 def _require_object(value: Any, field: str) -> dict[str, Any]:
@@ -180,7 +184,7 @@ def tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-def manifest_digest(path: Path = DEFAULT_MANIFEST_PATH) -> str:
+def manifest_digest(path: Path) -> str:
     payload = json.loads(path.read_text(encoding="utf-8"))
     return hashlib.sha256(canonical_json(payload)).hexdigest()
 
@@ -430,7 +434,7 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
     return PilotManifest(payload=payload, tasks=tasks, run_order=runs)
 
 
-def validate_manifest_file(path: Path = DEFAULT_MANIFEST_PATH) -> PilotManifest:
+def validate_manifest_file(path: Path) -> PilotManifest:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:

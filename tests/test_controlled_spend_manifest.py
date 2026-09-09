@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,7 @@ from tools.controlled_spend.manifest import (
 
 
 def test_frozen_manifest_and_fixture_oracles_are_complete() -> None:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
 
     assert len(manifest.tasks) == 4
     assert len(manifest.run_order) == RUN_COUNT
@@ -30,7 +32,7 @@ def test_frozen_manifest_and_fixture_oracles_are_complete() -> None:
 
 
 def test_materialized_task_is_a_clean_git_repository(tmp_path: Path) -> None:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     destination = tmp_path / "task"
 
     materialize_task(manifest.tasks[0], destination)
@@ -54,7 +56,7 @@ def test_runtime_bytecode_does_not_change_or_leak_into_fixture(
     cache.mkdir()
     (cache / "runtime.pyc").write_bytes(b"runtime")
 
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     destination = tmp_path / "task"
     materialize_task(manifest.tasks[0], destination)
 
@@ -112,3 +114,43 @@ def test_noncanonical_manifest_serialization_is_rejected(tmp_path: Path) -> None
 
     with pytest.raises(ManifestError, match="canonical JSON serialization"):
         validate_manifest_file(manifest_path)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("pilot", "preflight"),
+        ("pilot", "run", "--artifact-root", "/tmp/unused"),
+        (
+            "pilot",
+            "report",
+            "--artifact-root",
+            "/tmp/unused",
+            "--output-json",
+            "/tmp/unused.json",
+            "--output-markdown",
+            "/tmp/unused.md",
+        ),
+        (
+            "pilot",
+            "check",
+            "--artifact-root",
+            "/tmp/unused",
+            "--report-json",
+            "/tmp/unused.json",
+            "--report-markdown",
+            "/tmp/unused.md",
+        ),
+    ],
+)
+def test_pilot_cli_requires_explicit_manifest(arguments: tuple[str, ...]) -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "tools.controlled_spend", *arguments],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "--manifest" in completed.stderr

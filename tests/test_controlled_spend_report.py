@@ -7,8 +7,9 @@ from typing import Any
 import pytest
 
 from laconic.runtime.storage import RuntimeStorage
-from tools.controlled_spend.analysis import check_report, generate_report
+from tools.controlled_spend.analysis import AnalysisError, check_report, generate_report
 from tools.controlled_spend.manifest import (
+    DEFAULT_MANIFEST_PATH,
     PilotManifest,
     RunSpec,
     canonical_json,
@@ -104,7 +105,7 @@ def _write_headroom_mechanism(run_root: Path) -> None:
 
 
 def _seed_campaign(root: Path) -> PilotManifest:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     root.mkdir(mode=0o700)
     receipts: list[dict[str, Any]] = []
     for sequence, run in enumerate(manifest.run_order, start=1):
@@ -160,7 +161,7 @@ def _seed_campaign(root: Path) -> PilotManifest:
             "gateway_spent_usd": "0.24",
             "live_state_after": live_state,
             "live_state_before": live_state,
-            "manifest_hash": manifest_digest(),
+            "manifest_hash": manifest_digest(DEFAULT_MANIFEST_PATH),
             "schema_version": 1,
             "status": "completed",
         },
@@ -174,7 +175,7 @@ def test_complete_report_is_variance_only_and_reproducible(tmp_path: Path) -> No
     report_json = tmp_path / "report.json"
     report_markdown = tmp_path / "report.md"
 
-    report = generate_report(artifacts, report_json, report_markdown)
+    report = generate_report(artifacts, report_json, report_markdown, manifest=manifest)
 
     assert report["verdict"] == "complete"
     assert report["run_count"] == report["expected_run_count"] == len(manifest.run_order)
@@ -183,7 +184,7 @@ def test_complete_report_is_variance_only_and_reproducible(tmp_path: Path) -> No
     assert report["confirmatory_task_count_at_two_repeats"] >= 2
     assert set(report) == set(manifest.payload["public_report_keys"])
     assert not ({"arm_means", "effect", "paired_difference", "cost_by_arm"} & set(report))
-    assert check_report(artifacts, report_json, report_markdown) == report
+    assert check_report(artifacts, report_json, report_markdown, manifest=manifest) == report
     assert (artifacts / "analysis-private.json").stat().st_mode & 0o777 == 0o600
     assert "not a performance result" in report_markdown.read_text()
 
@@ -201,7 +202,9 @@ def test_incomplete_campaign_preserves_gateway_spend(tmp_path: Path) -> None:
     state.pop("gateway_spent_usd")
     _write_json(state_path, state)
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["run_count"] == 3
@@ -212,7 +215,7 @@ def test_incomplete_campaign_preserves_gateway_spend(tmp_path: Path) -> None:
 @pytest.mark.parametrize("mutation", ["missing_receipt", "duplicate_receipt"])
 def test_receipt_population_mutations_suppress_statistics(tmp_path: Path, mutation: str) -> None:
     artifacts = tmp_path / "private"
-    _seed_campaign(artifacts)
+    manifest = _seed_campaign(artifacts)
     receipt_path = artifacts / "gateway-receipts.jsonl"
     lines = receipt_path.read_bytes().splitlines(keepends=True)
     if mutation == "missing_receipt":
@@ -220,7 +223,9 @@ def test_receipt_population_mutations_suppress_statistics(tmp_path: Path, mutati
     else:
         receipt_path.write_bytes(b"".join((*lines, lines[0])))
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     if mutation == "missing_receipt":
@@ -229,7 +234,9 @@ def test_receipt_population_mutations_suppress_statistics(tmp_path: Path, mutati
         assert report["gateway_spend_usd"] == pytest.approx(0.23)
     else:
         assert report["run_count"] == 0
-        assert report["mechanism_failures"] == len(validate_manifest_file().run_order)
+        assert report["mechanism_failures"] == len(
+            validate_manifest_file(DEFAULT_MANIFEST_PATH).run_order
+        )
         assert report["gateway_spend_usd"] == 0.0
     assert report["paired_log_cost_sd"] is None
     assert report["confirmatory_task_count_at_two_repeats"] is None
@@ -245,7 +252,9 @@ def test_differential_completion_is_an_incomplete_disposition(tmp_path: Path) ->
     result["completion_passed"] = False
     _write_json(result_path, result)
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["completion_failures"] == 1
@@ -264,7 +273,9 @@ def test_missing_mechanism_is_an_incomplete_disposition(tmp_path: Path) -> None:
             path.rmdir()
     ledger_root.rmdir()
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["mechanism_failures"] == 1
@@ -280,7 +291,9 @@ def test_malformed_omp_usage_suppresses_statistics(tmp_path: Path) -> None:
     del records[1]["message"]["usage"]["cost"]
     transcript.write_text("".join(json.dumps(row) + "\n" for row in records))
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["mechanism_failures"] == 1
@@ -296,7 +309,9 @@ def test_non_diagnostic_first_tool_action_suppresses_statistics(tmp_path: Path) 
     records[1]["message"]["content"][0]["arguments"]["command"] = "cat diagnose.py"
     transcript.write_text("".join(json.dumps(row) + "\n" for row in records))
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["mechanism_failures"] == 1
@@ -317,7 +332,9 @@ def test_headroom_numeric_pass_through_is_valid_mechanism_evidence(tmp_path: Pat
         },
     )
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "complete"
 
@@ -333,7 +350,9 @@ def test_gateway_failure_and_completion_failure_partition_cells(tmp_path: Path) 
     result["passed"] = False
     _write_json(result_path, result)
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["completion_failures"] == 1
     assert report["mechanism_failures"] == 23
@@ -353,7 +372,9 @@ def test_undefined_correlation_yields_incomplete_disposition(tmp_path: Path) -> 
         cost["total"] = 1.0
         transcript.write_text("".join(json.dumps(row) + "\n" for row in records))
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["completion_failures"] == report["mechanism_failures"] == 0
@@ -363,24 +384,64 @@ def test_undefined_correlation_yields_incomplete_disposition(tmp_path: Path) -> 
 
 def test_public_privacy_gate_rejects_arm_cost_field(tmp_path: Path) -> None:
     artifacts = tmp_path / "private"
-    _seed_campaign(artifacts)
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    manifest = _seed_campaign(artifacts)
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
     report["native_mean_cost_usd"] = 1.0
 
     with pytest.raises(PrivacyViolationError, match="extra=.*native_mean_cost_usd"):
-        validate_public_report(report)
+        validate_public_report(report, manifest=manifest)
 
 
 def test_live_state_drift_forces_incomplete_disposition(tmp_path: Path) -> None:
     artifacts = tmp_path / "private"
-    _seed_campaign(artifacts)
+    manifest = _seed_campaign(artifacts)
     state_path = artifacts / "campaign-state.json"
     state = json.loads(state_path.read_text())
     state["live_state_after"] = {"laconic_runtime": "4" * 64, "omp_agent": "2" * 64}
     state["status"] = "incomplete"
     _write_json(state_path, state)
 
-    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+    report = generate_report(
+        artifacts, tmp_path / "report.json", tmp_path / "report.md", manifest=manifest
+    )
 
     assert report["verdict"] == "incomplete"
     assert report["paired_log_cost_sd"] is None
+
+
+def test_campaign_state_manifest_mismatch_is_refused(tmp_path: Path) -> None:
+    artifacts = tmp_path / "private"
+    manifest = _seed_campaign(artifacts)
+    state_path = artifacts / "campaign-state.json"
+    state = json.loads(state_path.read_text())
+    state["manifest_hash"] = "0" * 64
+    _write_json(state_path, state)
+
+    with pytest.raises(AnalysisError, match="does not match selected manifest"):
+        generate_report(
+            artifacts,
+            tmp_path / "report.json",
+            tmp_path / "report.md",
+            manifest=manifest,
+        )
+
+
+def test_public_report_manifest_mismatch_is_refused(tmp_path: Path) -> None:
+    artifacts = tmp_path / "private"
+    manifest = _seed_campaign(artifacts)
+    report = generate_report(
+        artifacts,
+        tmp_path / "report.json",
+        tmp_path / "report.md",
+        manifest=manifest,
+    )
+    different = PilotManifest(
+        payload={**manifest.payload, "study_id": "different-campaign"},
+        tasks=manifest.tasks,
+        run_order=manifest.run_order,
+    )
+
+    with pytest.raises(PrivacyViolationError, match="does not match the selected manifest"):
+        validate_public_report(report, manifest=different)

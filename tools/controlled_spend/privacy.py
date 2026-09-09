@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any, Final, cast
 
-from tools.controlled_spend.manifest import validate_manifest_file
+from tools.controlled_spend.manifest import PilotManifest
 
 _HEX_64: Final = frozenset("0123456789abcdef")
 _NULLABLE_FLOAT_KEYS: Final = frozenset(
@@ -56,9 +56,9 @@ def _non_negative_int(field: str, value: Any) -> int:
     return value
 
 
-def validate_public_report(payload: dict[str, Any]) -> None:
-    """Validate the only public shape the controlled pilot may serialize."""
-    allowed = frozenset(validate_manifest_file().payload["public_report_keys"])
+def validate_public_report(payload: dict[str, Any], *, manifest: PilotManifest) -> None:
+    """Validate the only public shape the selected controlled pilot may serialize."""
+    allowed = frozenset(manifest.payload["public_report_keys"])
     if set(payload) != allowed:
         extra = sorted(set(payload) - allowed)
         missing = sorted(allowed - set(payload))
@@ -71,15 +71,19 @@ def validate_public_report(payload: dict[str, Any]) -> None:
             raise PrivacyViolationError(f"{key} must not be negative")
     for key in _NULLABLE_FLOAT_KEYS:
         _number(key, payload[key], nullable=True)
-    if payload["schema_version"] != 1 or payload["expected_run_count"] != 24:
-        raise PrivacyViolationError("public report differs from the frozen schema or population")
+    if payload["schema_version"] != manifest.payload["schema_version"] or payload[
+        "expected_run_count"
+    ] != len(manifest.run_order):
+        raise PrivacyViolationError("public report differs from the selected schema or population")
+    analysis = cast(dict[str, Any], manifest.payload["analysis"])
+    limits = cast(dict[str, Any], manifest.payload["limits"])
     if (
-        payload["action_threshold_fraction"] != 0.10
-        or payload["alpha_two_sided"] != 0.05
-        or payload["power"] != 0.80
-        or payload["total_cap_usd"] != 10.0
+        payload["action_threshold_fraction"] != float(analysis["action_threshold_fraction"])
+        or payload["alpha_two_sided"] != float(analysis["alpha_two_sided"])
+        or payload["power"] != float(analysis["power"])
+        or payload["total_cap_usd"] != float(limits["total_spend_usd"])
     ):
-        raise PrivacyViolationError("public report differs from the frozen statistical contract")
+        raise PrivacyViolationError("public report differs from the selected statistical contract")
     dispersion = payload["paired_log_cost_sd"]
     if dispersion is not None and dispersion < 0:
         raise PrivacyViolationError("paired_log_cost_sd must not be negative")
@@ -94,6 +98,8 @@ def validate_public_report(payload: dict[str, Any]) -> None:
         or set(manifest_hash) - _HEX_64
     ):
         raise PrivacyViolationError("manifest_hash must be a lowercase SHA-256 digest")
+    if manifest_hash != manifest.digest:
+        raise PrivacyViolationError("manifest_hash does not match the selected manifest")
     verdict = payload["verdict"]
     if verdict not in {"complete", "incomplete"}:
         raise PrivacyViolationError("verdict is outside the closed vocabulary")

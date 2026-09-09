@@ -22,15 +22,13 @@ from laconic.runtime.omp_installer import apply_omp_install
 from laconic.runtime.storage import resolve_data_dir
 from tools.controlled_spend.budget_gateway import BudgetGateway, GatewaySnapshot
 from tools.controlled_spend.manifest import (
-    DEFAULT_MANIFEST_PATH,
+    FIXTURES_ROOT,
     Arm,
     PilotManifest,
     RunSpec,
     canonical_json,
-    manifest_digest,
     materialize_task,
     tree_digest,
-    validate_manifest_file,
 )
 
 _OMP_PACKAGE: Final = "@oh-my-pi/pi-coding-agent"
@@ -551,7 +549,7 @@ def _execute_run(
     worktree = run_root / "worktree"
     task = next(task for task in manifest.tasks if task.task_id == run.task_id)
     materialize_task(task, worktree)
-    original_source = DEFAULT_MANIFEST_PATH.parent / "fixtures" / task.task_id / task.source_dir
+    original_source = FIXTURES_ROOT / task.task_id / task.source_dir
 
     agent_dir = run_root / "agent"
     session_dir = run_root / "sessions"
@@ -573,7 +571,7 @@ def _execute_run(
                 data_directory=run_root / "laconic-data",
             )
             extension_path = installation.plan.path
-    prompt_path = DEFAULT_MANIFEST_PATH.parent / "fixtures" / task.task_id / task.prompt_file
+    prompt_path = FIXTURES_ROOT / task.task_id / task.prompt_file
     prompt = prompt_path.read_text(encoding="utf-8")
     command = build_run_command(
         manifest,
@@ -622,10 +620,10 @@ def _execute_run(
 def run_campaign(
     artifact_root: Path,
     *,
+    manifest: PilotManifest,
     live_agent_database: Path | None = None,
 ) -> dict[str, Any]:
-    """Execute the frozen population once; any invalid cell terminates the campaign."""
-    manifest = validate_manifest_file()
+    """Execute the selected frozen population once."""
     root = artifact_root.expanduser().absolute()
     source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
     live_roots = {
@@ -652,8 +650,8 @@ def run_campaign(
         "completed_runs": [],
         "credential_snapshot_sha256": credential_sha,
         "live_state_before": live_before,
-        "manifest_hash": manifest_digest(),
-        "schema_version": 1,
+        "manifest_hash": manifest.digest,
+        "schema_version": manifest.payload["schema_version"],
         "status": "preflight",
     }
     _atomic_private_json(state_path, state)

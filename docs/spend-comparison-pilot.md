@@ -19,16 +19,19 @@ Only generated public JSON and Markdown reports may enter Git. V1 retains its fr
 Never run M20-v1 again. To verify its public disposition, remove provider credentials from the command environment, copy the private root to a temporary owner-only location outside Git, and run report/check against the copy. `generate_report` writes private analysis state, so pointing it at the preserved root would violate the evidence boundary.
 
 ```bash
+V1_MANIFEST="tools/controlled_spend/pilot-manifest.json"
 VERIFY_PARENT="$(mktemp -d)"
 chmod 700 "$VERIFY_PARENT"
 cp -R "$HOME/.local/share/laconic-controlled-spend/m20-pilot" "$VERIFY_PARENT/m20-pilot"
 
 uv run python -m tools.controlled_spend pilot report \
+  --manifest "$V1_MANIFEST" \
   --artifact-root "$VERIFY_PARENT/m20-pilot" \
   --output-json "$VERIFY_PARENT/controlled-spend-pilot.json" \
   --output-markdown "$VERIFY_PARENT/controlled-spend-pilot.md"
 
 uv run python -m tools.controlled_spend pilot check \
+  --manifest "$V1_MANIFEST" \
   --artifact-root "$VERIFY_PARENT/m20-pilot" \
   --report-json "$VERIFY_PARENT/controlled-spend-pilot.json" \
   --report-markdown "$VERIFY_PARENT/controlled-spend-pilot.md"
