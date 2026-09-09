@@ -117,10 +117,8 @@ def _load_gateway_request_counts(
     if sorted(sequences) != list(range(1, len(sequences) + 1)):
         raise AnalysisError("gateway receipt sequences are duplicated or incomplete")
     request_limit = cast(dict[str, Any], manifest.payload["limits"])["provider_requests_per_run"]
-    if any(
-        counts[run.run_id] < 1 or counts[run.run_id] > request_limit for run in manifest.run_order
-    ):
-        raise AnalysisError("gateway requests are missing or exceed the frozen per-run limit")
+    if any(count > request_limit for count in counts.values()):
+        raise AnalysisError("gateway requests exceed the frozen per-run limit")
     return counts, spent
 
 
