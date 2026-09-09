@@ -71,7 +71,7 @@ The shared loopback gateway reserves each request's conservative maximum before 
 
 The committed candidate manifest hash is `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`; its `execution_authorized` field remains `false`. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
 
-Preflight and report/check are no-provider operations. `pilot run` must fail while the manifest's execution authorization is false. Do not probe credentials or attempt execution in the readiness session.
+Preflight, report, and check are no-provider operations and need no authorization receipt. `pilot run` fails closed for M20-v2 unless the operator names a valid external execution-authorization receipt, and fails closed for M20-v1 unconditionally.
 
 ## M20-v1 recorded disposition
 
@@ -79,13 +79,42 @@ The authorized campaign ran once and stopped under the frozen invalid-cell rule.
 
 Do not restart, tune, or salvage this pilot. It supplies no sample-feasibility result and does not authorize a confirmatory run.
 
-## M20-v2 candidate execution boundary
+## M20-v2 external execution authorization
 
-Provider execution requires a fresh owner instruction naming or unambiguously accepting the exact committed v2 manifest hash and maximum reserved-spend calculation. Use only a fresh private root distinct from M20-v1. Never reuse a partial v2 root after any paid result.
+The manifest's `execution_authorized` field stays `false` forever. It is not a switch. Setting it to `true` would change the manifest bytes and therefore the committed hash `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f` that the owner reviewed, and `manifest check`, `pilot preflight`, `pilot report`, and `pilot check` all reject a v2 manifest whose value is not exactly `false`. The field records that the study contract does not authorize itself.
+
+Authorization is therefore external to the study. It is an operator capability carried by a private, single-use receipt file that lives outside Git and outside both live-state roots. A receipt cannot override any manifest field, cannot raise the cap, and cannot select a different population, model, task, profile, or limit.
+
+A receipt is a canonically serialized JSON object with exactly these keys:
+
+| Key | Required value |
+| --- | --- |
+| `schema_version` | `1` |
+| `authorization_id` | A 64-character lowercase hexadecimal opaque identifier |
+| `study_id` | `m20-variance-pilot-v2` |
+| `manifest_sha256` | The exact committed v2 manifest digest |
+| `artifact_root` | The absolute canonical private root this receipt authorizes |
+| `total_spend_usd` | A decimal string equal to the manifest cap, `10.00` |
+| `authorized_at` | An RFC 3339 timestamp |
+| `execution_authorized` | `true` |
+| `single_use` | `true` |
+
+The receipt must be a regular non-symlink file owned by the invoking user with mode `0600`, inside a directory owned by that user with mode `0700`. It must sit outside the repository working tree, outside the Laconic runtime data directory, outside the OMP agent directory, and outside the artifact root it authorizes.
+
+`pilot run` validates the receipt before it touches credentials, runs the OMP or Headroom preflight, creates the artifact root, or forwards a provider request. It refuses a missing file, a non-canonical or non-object payload, an unknown or missing key, a wrong schema version, a wrong study ID, a wrong manifest digest, a wrong artifact root, a cap that differs from the manifest, a malformed timestamp, `execution_authorized` that is not exactly `true`, `single_use` that is not exactly `true`, a symlink, a wrong owner or mode, a v1 manifest, and an artifact root that already exists.
+
+On acceptance the runner records the receipt's SHA-256 digest and opaque authorization ID in private campaign state before the first provider request, then consumes the receipt by removing it. A consumed receipt cannot authorize a second campaign, and the bound artifact root cannot be reused because an existing root is refused.
+
+M20-v1 execution is permanently closed. `pilot run` refuses every v1 manifest with or without a receipt, while v1 `pilot report` and `pilot check` remain fully operational for historical verification.
+
+## M20-v2 execution boundary
+
+Provider execution requires a fresh owner instruction naming or unambiguously accepting the exact committed v2 manifest hash and maximum reserved-spend calculation. Use only a fresh private root distinct from M20-v1. Never reuse a partial v2 root after any paid result. `V2_AUTHORIZATION` below is the operator's private receipt path; it has no default and no environment fallback.
 
 ```bash
 uv run python -m tools.controlled_spend pilot run \
   --manifest "$V2_MANIFEST" \
+  --authorization "$V2_AUTHORIZATION" \
   --artifact-root "$V2_PRIVATE_ROOT"
 
 uv run python -m tools.controlled_spend pilot report \
@@ -101,7 +130,17 @@ uv run python -m tools.controlled_spend pilot check \
   --report-markdown docs/results/controlled-spend-pilot-v2.md
 ```
 
-These commands are a future operator surface, not authorization. Any incomplete cell terminates the candidate campaign. Preserve its separate private root for diagnosis and publish only the exact allowlisted disposition.
+The maximum campaign commitment is `$10.00`. The gateway refuses any request whose reservation would make cumulative spend plus outstanding reservations cross that bound, so no receipt and no invocation can commit more.
+
+There is no retry. Once `pilot run` starts or creates its bound root, it is not run again for that authorization, even if zero provider requests were forwarded. Record the terminal state, preserve the private root for diagnosis, and publish only the exact allowlisted disposition the frozen logic produces. Never soften, repair, resume, or salvage an incomplete campaign.
+
+### Live-state quiescence is a pre-spend gate
+
+The campaign hashes both live-state roots before it starts and again when it finishes, and the frozen `live_state_changed` stopping rule invalidates the whole campaign when the two digests differ. Those roots are the Laconic runtime data directory and the OMP agent directory, and both are shared with whatever agents are running on the machine at the time.
+
+Ordinary local activity mutates them within seconds: the Observe audit log and per-session runtime ledgers under the Laconic data directory, and the agent database write-ahead log, per-session transcripts, and composer status caches under the OMP agent directory. A supervising agent session is itself such a writer, so a campaign supervised from a live coding-agent session cannot satisfy the rule.
+
+Verify quiescence before committing spend by sampling both roots with the runner's own `tree_state_digest` across a window at least as long as the campaign's expected duration, under the same monitoring you intend to use. If the digests move, the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell. Do not start the campaign, and do not narrow or relax the rule to make it pass: the roots it covers are part of the frozen contract.
 
 ## Interpretation
 
