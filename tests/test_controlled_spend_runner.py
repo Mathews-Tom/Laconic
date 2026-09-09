@@ -69,6 +69,24 @@ def test_live_state_digest_length_prefixes_file_content(tmp_path: Path) -> None:
     assert tree_state_digest(two_files) != tree_state_digest(one_file)
 
 
+def test_live_state_digest_hashes_symlink_without_following_target(tmp_path: Path) -> None:
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "state").write_bytes(b"before")
+    link = live_root / "skills"
+    link.symlink_to(external, target_is_directory=True)
+    before = tree_state_digest(live_root)
+
+    (external / "state").write_bytes(b"after")
+
+    assert tree_state_digest(live_root) == before
+    link.unlink()
+    link.symlink_to(tmp_path / "other", target_is_directory=True)
+    assert tree_state_digest(live_root) != before
+
+
 def test_native_and_laconic_commands_share_the_frozen_omp_surface(tmp_path: Path) -> None:
     manifest = validate_manifest_file()
     worktree = tmp_path / "worktree"

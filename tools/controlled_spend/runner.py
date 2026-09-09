@@ -149,21 +149,32 @@ def tree_state_digest(root: Path) -> str:
     if root.is_symlink() or not root.is_dir():
         raise PilotRunnerError("live-state root is not an ordinary directory")
     for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise PilotRunnerError("live-state tree contains a symlink")
         relative = path.relative_to(root).as_posix().encode()
-        digest.update(b"d" if path.is_dir() else b"f")
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        if path.is_dir():
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            target = os.fsencode(os.readlink(path))
+            digest.update(b"l")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            digest.update(len(target).to_bytes(8, "big"))
+            digest.update(target)
+            continue
+        if stat.S_ISDIR(metadata.st_mode):
+            digest.update(b"d")
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
             digest.update((0).to_bytes(8, "big"))
             continue
-        if not path.is_file():
+        if not stat.S_ISREG(metadata.st_mode):
             raise PilotRunnerError("live-state tree contains a special file")
-        size = path.stat().st_size
+        digest.update(b"f")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        size = metadata.st_size
         digest.update(size.to_bytes(8, "big"))
         read_bytes = 0
-        with path.open("rb") as handle:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as handle:
             while block := handle.read(1024 * 1024):
                 read_bytes += len(block)
                 digest.update(block)
