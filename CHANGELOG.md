@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- Controlled-spend `pilot run` now requires an explicit external execution-authorization receipt for M20-v2. The receipt is a private, single-use, exact-key JSON capability bound to the committed manifest digest, the study identifier, one canonical private artifact root, and the unchanged `$10.00` campaign cap. It is validated before credential access, environment preflight, artifact-root creation, and any provider request, and it is consumed so it cannot authorize a second campaign.
+
+### Changed
+
+- The M20-v2 manifest remains byte-identical with `execution_authorized: false`. That field is a permanent statement that the study contract does not authorize itself, not an operator switch; authorization is external to the manifest so the owner-reviewed digest survives.
+- M20-v1 `pilot run` is permanently closed. M20-v1 `pilot report` and `pilot check` remain fully operational for historical verification, and both v1 public artifacts stay byte-identical.
+
 ## [0.10.0] — 2026-09-09
 
 ### Added
