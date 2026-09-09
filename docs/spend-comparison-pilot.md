@@ -62,6 +62,12 @@ A complete disposition requires all 24 frozen run IDs in exact order, a valid co
 
 An incomplete disposition publishes only counts, spend, and the frozen parameters. Dispersion, correlations, and confirmatory task count remain null.
 
+## Recorded disposition
+
+The authorized campaign ran once and stopped under the frozen invalid-cell rule. The generated [public disposition](results/controlled-spend-pilot.md) is the canonical record of its validity counts and gateway spend. Dispersion, correlations, and confirmatory task count are null. The live OMP and Laconic runtime tree digests matched before and after, the credential snapshot was deleted, and the post-run dogfood check passed.
+
+Do not restart, tune, or salvage this pilot. It supplies no sample-feasibility result and does not authorize a confirmatory run.
+
 ## Interpretation
 
 For a complete pilot, the private analysis computes each task/arm mean over the two repetitions and the paired task log-cost difference `log(mean_laconic) - log(mean_native)`. The public report exposes only the sample standard deviation of those four paired differences. It also reports native/Laconic and native/Headroom cost correlations across the four task means.

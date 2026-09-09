@@ -1,6 +1,6 @@
 # Controlled Spend Comparison — Design
 
-**Status: owner-authorized variance pilot; harness implemented and paid execution pending.** H-99 records the M19 human review sign-off, the fresh instruction to implement and run one bounded pilot, and the owner's fixed choices: a $10 total provider-spend cap, Claude Sonnet 5, and a 10% smallest effect worth acting on. This authorization does not extend to a confirmatory run or a savings claim.
+**Status: the one authorized variance pilot ran and ended with the pre-registered incomplete disposition.** The generated [public disposition](results/controlled-spend-pilot.md) is the canonical result. Dispersion, correlations, and confirmatory task count remain uncomputed. The no-restart rule prohibits rerunning or tuning this pilot, and no confirmatory run or savings claim is authorized.
 
 ## 1. Why the existing measurement cannot answer the question
 
@@ -111,8 +111,8 @@ The pilot may run only when every condition below is satisfied:
 1. **Satisfied — informed sign-off and fresh instruction.** H-99 records the owner's review of the M19 composition/limitations/privacy/design packet and the explicit instruction to implement and run the recommended comparison.
 2. **Satisfied — pilot pre-registration committed before spend.** The canonical manifest hash is `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`; it pins all tasks, repeats, 24 arm orders, model/catalog, price authority, metric, estimator, 10% threshold, limits, privacy schema, $10 cap, and stopping rules.
 3. **Satisfied — enforced cap verified without provider spend.** The loopback gateway reserves the frozen worst-case request amount before forwarding, stops before a request that could cross $10, charges the reservation on missing or malformed usage, and enforces the eight-request cell limit. Streaming and non-streaming fake-upstream tests exercise the boundary.
-4. **Required — disposable isolation.** Every arm runs in an owner-only isolated OMP directory and disposable Git repository. It never changes the owner's live OMP profile, worktree, runtime ledger store, or ordinary sessions.
-5. **Required — uninterrupted dogfood.** The collection already running is neither disabled nor used as an arm. Before/after state digests and `laconic-dogfood-check` must remain clean.
+4. **Satisfied — disposable isolation.** Every attempted arm ran in an owner-only isolated OMP directory and disposable Git repository. The campaign's before/after digest for the live OMP tree matched.
+5. **Satisfied — uninterrupted dogfood.** The campaign's before/after runtime-store digest matched, and `laconic-dogfood-check` passed before and after execution.
 
 The confirmatory study is not authorized by satisfying these pilot conditions.
 
