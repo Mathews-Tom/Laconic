@@ -37,9 +37,9 @@ The approved product tranche is:
 3. integrate that runtime into OMP;
 4. ~~qualify it through at least 10 completed real OMP sessions across 3 repositories and at least 100 eligible observations~~ — completed, see `docs/runtime-beta-report.md`;
 5. ~~prepare the bounded `v0.9.0` beta only when every safety criterion passes~~ — completed; `v0.9.0` is published, with `v0.9.1` correcting a cold-start defect;
-6. measure locally, read-only, where model spend actually goes in the owner's own sessions and what the codec did in those same sessions.
+6. ~~measure locally, read-only, where model spend goes and what the codec did in those same sessions~~ — completed as a single-arm composition report containing no savings figure.
 
-Item 6 is composition measurement, not a savings measurement. The data it reads is single-arm — the codec is always on — so it has no counterfactual and cannot produce a savings figure by any analysis. What a controlled comparison would require is specified in `docs/spend-comparison-design.md`, which is a design only: it is not implemented, and running it needs a fresh explicit authorization. This authorization does not include provider replay spend, external data collection, a confirmatory cohort, a controlled codec-on/codec-off comparison, Claude Code integration, MCP, action rewriting, history compaction, hosted services, or universal savings claims.
+Item 6 is composition measurement, not savings measurement: every readable session ran with the codec enabled, so the corpus has no counterfactual. M20-v1 separately ran one frozen controlled comparison and ended incomplete with 0 valid cells and null dispersion, correlations, effect, and confirmatory sample size. M20-v2 corrects only operational validity mechanics and remains unexecuted with `execution_authorized=false`. Running it, any confirmatory cohort, or any other provider-backed comparison requires fresh explicit owner authorization. The current authorization does not include provider replay spend, external data collection, Claude Code integration, MCP, action rewriting, history compaction, hosted services, or universal savings claims.
 
 ## Claims that remain valid
 
