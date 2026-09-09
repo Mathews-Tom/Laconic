@@ -211,7 +211,7 @@ def snapshot_agent_database(source: Path, destination: Path) -> str:
         os.chmod(destination, 0o600)
         return _sha256(destination)
     except BaseException:
-        destination.unlink(missing_ok=True)
+        _cleanup_credential_snapshot(destination)
         raise
 
 
@@ -226,6 +226,14 @@ def _copy_credential_snapshot(snapshot: Path, destination: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _cleanup_credential_snapshot(snapshot: Path) -> bool:
+    for suffix in ("", "-wal", "-shm"):
+        snapshot.with_name(f"{snapshot.name}{suffix}").unlink(missing_ok=True)
+    return not any(
+        snapshot.with_name(f"{snapshot.name}{suffix}").exists() for suffix in ("", "-wal", "-shm")
+    )
 
 
 def _write_models_override(agent_dir: Path, gateway_url: str) -> None:
@@ -704,8 +712,7 @@ def run_campaign(
         raise
     finally:
         active_error = sys.exception()
-        credential_snapshot.unlink(missing_ok=True)
-        cleanup_failed = credential_snapshot.exists()
+        cleanup_failed = not _cleanup_credential_snapshot(credential_snapshot)
         live_after = {name: tree_state_digest(path) for name, path in live_roots.items()}
         state["live_state_after"] = live_after
         live_state_changed = live_after != live_before

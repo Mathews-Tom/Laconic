@@ -8,6 +8,7 @@ import pytest
 
 from tools.controlled_spend.manifest import RunSpec, validate_manifest_file
 from tools.controlled_spend.runner import (
+    _cleanup_credential_snapshot,
     build_run_command,
     build_run_environment,
     cleanup_agent_directory,
@@ -43,6 +44,17 @@ def test_agent_cleanup_removes_database_and_wal_sidecars(tmp_path: Path) -> None
     cleanup_agent_directory(agent_dir)
 
     assert not agent_dir.exists()
+
+
+def test_credential_cleanup_removes_database_and_wal_sidecars(tmp_path: Path) -> None:
+    snapshot = tmp_path / "credential-snapshot.db"
+    for suffix in ("", "-wal", "-shm"):
+        snapshot.with_name(f"{snapshot.name}{suffix}").write_bytes(b"private")
+
+    cleaned = _cleanup_credential_snapshot(snapshot)
+
+    assert cleaned is True
+    assert not any(tmp_path.glob("credential-snapshot.db*"))
 
 
 def test_live_state_digest_changes_with_any_tree_byte(tmp_path: Path) -> None:
