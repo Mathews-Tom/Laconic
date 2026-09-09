@@ -1,0 +1,1 @@
+Fix dependency ordering so every dependency appears before the item that requires it, independent items remain deterministically ordered, and cycles still raise `DependencyCycleError`. Do not modify tests. Completion requires `python3 -m unittest discover -s tests -q` to exit zero.

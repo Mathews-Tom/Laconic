@@ -16,7 +16,11 @@ from tools.controlled_spend.budget_gateway import (
     BudgetStoppedError,
     parse_anthropic_usage,
 )
-from tools.controlled_spend.manifest import DEFAULT_MANIFEST_PATH, validate_manifest_file
+from tools.controlled_spend.manifest import (
+    DEFAULT_MANIFEST_PATH,
+    DEFAULT_V2_MANIFEST_PATH,
+    validate_manifest_file,
+)
 
 
 def _request_body(*, padding: str = "") -> bytes:
@@ -96,6 +100,47 @@ def test_per_run_request_limit_stops_before_ninth_request(tmp_path: Path) -> Non
     assert len(reservations) == 8
     assert ledger.snapshot().request_count == 8
     assert ledger.snapshot().halted_reason == "per_run_request_limit_reached"
+
+
+def test_v2_per_run_request_limit_stops_before_seventeenth_request(
+    tmp_path: Path,
+) -> None:
+    ledger = BudgetLedger(
+        validate_manifest_file(DEFAULT_V2_MANIFEST_PATH),
+        tmp_path / "receipts.jsonl",
+    )
+    reservations = [ledger.reserve("r001", _request_body()) for _ in range(16)]
+
+    with pytest.raises(BudgetStoppedError, match="per-run provider request limit"):
+        ledger.reserve("r001", _request_body())
+
+    assert len(reservations) == 16
+    assert ledger.snapshot().request_count == 16
+    assert ledger.snapshot().halted_reason == "per_run_request_limit_reached"
+
+
+def test_normalized_request_cannot_exceed_reservation_size_ceiling(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "max_tokens": 1,
+        "messages": [{"content": "", "role": "user"}],
+        "model": "claude-sonnet-5",
+    }
+    base = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    payload["messages"][0]["content"] = "x" * (16 * 1024 * 1024 - len(base))
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    assert len(body) == 16 * 1024 * 1024
+    ledger = BudgetLedger(
+        validate_manifest_file(DEFAULT_V2_MANIFEST_PATH),
+        tmp_path / "receipts.jsonl",
+    )
+
+    with pytest.raises(BudgetStoppedError, match="normalized request body"):
+        ledger.reserve("r001", body)
+
+    assert ledger.snapshot().request_count == 0
+    assert ledger.snapshot().halted_reason == "task_or_configuration_drift"
 
 
 def test_receipt_reload_accepts_out_of_order_concurrent_completions(tmp_path: Path) -> None:

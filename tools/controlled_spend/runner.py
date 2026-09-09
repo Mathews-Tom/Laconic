@@ -38,6 +38,7 @@ _STATE_FILE: Final = "campaign-state.json"
 _RECEIPT_FILE: Final = "gateway-receipts.jsonl"
 _CREDENTIAL_SNAPSHOT: Final = "credential-snapshot.db"
 _RUN_RESULT: Final = "run-result.json"
+_DIAGNOSIS_RESULT: Final = "diagnosis-result.json"
 
 _ENVIRONMENT_KEYS_TO_CLEAR: Final = frozenset(
     {
@@ -60,6 +61,10 @@ _ENVIRONMENT_KEYS_TO_CLEAR: Final = frozenset(
 
 class PilotRunnerError(RuntimeError):
     """Raised when the controlled pilot cannot continue safely."""
+
+
+class RunnerDiagnosisError(PilotRunnerError):
+    """Raised when the deterministic failing-baseline preflight does not fail."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,6 +428,33 @@ def _run_process(
     )
 
 
+def _run_diagnosis(worktree: Path, run_root: Path) -> bool:
+    env = dict(os.environ)
+    for key in tuple(env):
+        if key in _ENVIRONMENT_KEYS_TO_CLEAR or key.startswith("HEADROOM_"):
+            env.pop(key)
+    result = _run_process(
+        ["python3", "diagnose.py"],
+        cwd=worktree,
+        env=env,
+        timeout_seconds=30,
+        stdout_path=run_root / "diagnose.stdout",
+        stderr_path=run_root / "diagnose.stderr",
+    )
+    baseline_failed = not result.timed_out and result.returncode > 0
+    _atomic_private_json(
+        run_root / _DIAGNOSIS_RESULT,
+        {
+            "baseline_failed": baseline_failed,
+            "command": ["python3", "diagnose.py"],
+            "returncode": result.returncode,
+            "timed_out": result.timed_out,
+            "wall_seconds": result.wall_seconds,
+        },
+    )
+    return baseline_failed
+
+
 def _completion_passed(command: tuple[str, ...], cwd: Path) -> bool:
     completed = subprocess.run(
         (sys.executable, *command[1:]),
@@ -442,8 +474,13 @@ def _guard_fixture_files(original_source: Path, worktree: Path) -> bool:
     ) and tree_digest(original_source / "tests") == tree_digest(worktree / "tests")
 
 
-def _run_payload(result: RunResult, gateway: GatewaySnapshot) -> dict[str, Any]:
-    return {
+def _run_payload(
+    result: RunResult,
+    gateway: GatewaySnapshot,
+    *,
+    runner_diagnosis_passed: bool | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "arm": result.arm,
         "completion_passed": result.completion_passed,
         "fixture_guards_passed": result.fixture_guards_passed,
@@ -456,6 +493,9 @@ def _run_payload(result: RunResult, gateway: GatewaySnapshot) -> dict[str, Any]:
         "run_id": result.run_id,
         "wall_seconds": result.process.wall_seconds,
     }
+    if runner_diagnosis_passed is not None:
+        payload["runner_diagnosis_passed"] = runner_diagnosis_passed
+    return payload
 
 
 def _preflight_binary(command: list[str], expected: str, label: str) -> None:
@@ -551,6 +591,13 @@ def _execute_run(
     materialize_task(task, worktree)
     original_source = FIXTURES_ROOT / task.task_id / task.source_dir
 
+    runner_diagnosis_passed: bool | None = None
+    if manifest.payload["schema_version"] == 2:
+        runner_diagnosis_passed = _run_diagnosis(worktree, run_root)
+        if not runner_diagnosis_passed:
+            raise RunnerDiagnosisError(
+                "runner diagnosis did not observe the frozen failing baseline"
+            )
     agent_dir = run_root / "agent"
     session_dir = run_root / "sessions"
     _make_private_directory(agent_dir, root=run_root)
@@ -610,7 +657,11 @@ def _execute_run(
         )
         _atomic_private_json(
             run_root / _RUN_RESULT,
-            _run_payload(result, gateway.ledger.snapshot()),
+            _run_payload(
+                result,
+                gateway.ledger.snapshot(),
+                runner_diagnosis_passed=runner_diagnosis_passed,
+            ),
         )
         return result
     finally:
@@ -624,6 +675,11 @@ def run_campaign(
     live_agent_database: Path | None = None,
 ) -> dict[str, Any]:
     """Execute the selected frozen population once."""
+    if (
+        manifest.payload["schema_version"] == 2
+        and manifest.payload.get("execution_authorized") is not True
+    ):
+        raise PilotRunnerError("selected M20-v2 manifest does not authorize provider execution")
     root = artifact_root.expanduser().absolute()
     source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
     live_roots = {
@@ -682,13 +738,20 @@ def run_campaign(
         _atomic_private_json(state_path, state)
         with BudgetGateway(manifest, root / _RECEIPT_FILE) as gateway:
             for run in manifest.run_order:
-                result = _execute_run(
-                    manifest,
-                    run,
-                    campaign_root=root,
-                    credential_snapshot=credential_snapshot,
-                    gateway=gateway,
-                )
+                try:
+                    result = _execute_run(
+                        manifest,
+                        run,
+                        campaign_root=root,
+                        credential_snapshot=credential_snapshot,
+                        gateway=gateway,
+                    )
+                except RunnerDiagnosisError:
+                    state["status"] = "incomplete"
+                    state["failed_run"] = run.run_id
+                    state["gateway_halted_reason"] = "runner_diagnosis_failed"
+                    _atomic_private_json(state_path, state)
+                    raise
                 snapshot = gateway.ledger.snapshot()
                 if not result.passed or snapshot.halted_reason is not None:
                     state["status"] = "incomplete"

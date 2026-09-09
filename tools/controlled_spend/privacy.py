@@ -24,13 +24,25 @@ _FLOAT_KEYS: Final = frozenset(
         "gateway_spend_usd",
     }
 )
-_INT_KEYS: Final = frozenset(
+_V1_INT_KEYS: Final = frozenset(
     {
         "schema_version",
         "run_count",
         "expected_run_count",
         "completion_failures",
         "mechanism_failures",
+    }
+)
+_V2_INT_KEYS: Final = frozenset(
+    {
+        "schema_version",
+        "attempted_cells",
+        "valid_cells",
+        "expected_cell_count",
+        "unrun_cells",
+        "task_completion_failures",
+        "protocol_failures",
+        "mechanism_non_engagement",
     }
 )
 
@@ -63,7 +75,16 @@ def validate_public_report(payload: dict[str, Any], *, manifest: PilotManifest) 
         extra = sorted(set(payload) - allowed)
         missing = sorted(allowed - set(payload))
         raise PrivacyViolationError(f"public report keys differ: missing={missing} extra={extra}")
-    for key in _INT_KEYS:
+    schema_version = manifest.payload["schema_version"]
+    if schema_version == 1:
+        int_keys = _V1_INT_KEYS
+        expected_count_key = "expected_run_count"
+    elif schema_version == 2:
+        int_keys = _V2_INT_KEYS
+        expected_count_key = "expected_cell_count"
+    else:
+        raise PrivacyViolationError("selected manifest schema is unsupported")
+    for key in int_keys:
         _non_negative_int(key, payload[key])
     for key in _FLOAT_KEYS:
         value = _number(key, payload[key])
@@ -71,9 +92,9 @@ def validate_public_report(payload: dict[str, Any], *, manifest: PilotManifest) 
             raise PrivacyViolationError(f"{key} must not be negative")
     for key in _NULLABLE_FLOAT_KEYS:
         _number(key, payload[key], nullable=True)
-    if payload["schema_version"] != manifest.payload["schema_version"] or payload[
-        "expected_run_count"
-    ] != len(manifest.run_order):
+    if payload["schema_version"] != schema_version or payload[expected_count_key] != len(
+        manifest.run_order
+    ):
         raise PrivacyViolationError("public report differs from the selected schema or population")
     analysis = cast(dict[str, Any], manifest.payload["analysis"])
     limits = cast(dict[str, Any], manifest.payload["limits"])
@@ -109,21 +130,40 @@ def validate_public_report(payload: dict[str, Any], *, manifest: PilotManifest) 
             raise PrivacyViolationError(
                 "confirmatory_task_count_at_two_repeats must be null or at least two"
             )
-    if payload["run_count"] > payload["expected_run_count"]:
-        raise PrivacyViolationError("run_count exceeds the frozen population")
-    if (
-        payload["completion_failures"] + payload["mechanism_failures"]
-        > payload["expected_run_count"]
-    ):
-        raise PrivacyViolationError("failure counts exceed the frozen population")
     statistical_keys = (*_NULLABLE_FLOAT_KEYS, "confirmatory_task_count_at_two_repeats")
-    if verdict == "complete":
+    if schema_version == 1:
+        if payload["run_count"] > payload["expected_run_count"]:
+            raise PrivacyViolationError("run_count exceeds the frozen population")
         if (
-            payload["run_count"] != payload["expected_run_count"]
-            or payload["completion_failures"] != 0
-            or payload["mechanism_failures"] != 0
-            or any(payload[key] is None for key in statistical_keys)
+            payload["completion_failures"] + payload["mechanism_failures"]
+            > payload["expected_run_count"]
         ):
+            raise PrivacyViolationError("failure counts exceed the frozen population")
+        complete = (
+            payload["run_count"] == payload["expected_run_count"]
+            and payload["completion_failures"] == 0
+            and payload["mechanism_failures"] == 0
+        )
+    else:
+        if payload["attempted_cells"] + payload["unrun_cells"] != payload["expected_cell_count"]:
+            raise PrivacyViolationError("attempted and unrun cells do not partition the population")
+        if (
+            payload["valid_cells"]
+            + payload["task_completion_failures"]
+            + payload["protocol_failures"]
+            + payload["mechanism_non_engagement"]
+            != payload["attempted_cells"]
+        ):
+            raise PrivacyViolationError("v2 dispositions do not partition attempted cells")
+        complete = (
+            payload["attempted_cells"] == payload["valid_cells"] == payload["expected_cell_count"]
+            and payload["unrun_cells"] == 0
+            and payload["task_completion_failures"] == 0
+            and payload["protocol_failures"] == 0
+            and payload["mechanism_non_engagement"] == 0
+        )
+    if verdict == "complete":
+        if not complete or any(payload[key] is None for key in statistical_keys):
             raise PrivacyViolationError("complete report does not satisfy the frozen validity gate")
     elif any(payload[key] is not None for key in statistical_keys):
         raise PrivacyViolationError("incomplete report must suppress every statistical output")

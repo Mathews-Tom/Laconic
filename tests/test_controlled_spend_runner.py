@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
+import tools.controlled_spend.runner as runner_module
 from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
+    DEFAULT_V2_MANIFEST_PATH,
     RunSpec,
+    materialize_task,
     validate_manifest_file,
 )
 from tools.controlled_spend.runner import (
+    PilotRunnerError,
     _cleanup_credential_snapshot,
+    _execute_run,
+    _run_diagnosis,
     build_run_command,
     build_run_environment,
     cleanup_agent_directory,
+    run_campaign,
     snapshot_agent_database,
     tree_state_digest,
 )
@@ -211,3 +220,68 @@ def test_native_environment_removes_ambient_experiment_state(
     assert "ANTHROPIC_TARGET_API_URL" not in env
     assert "HEADROOM_BEACON" not in env
     assert not (run_root / "headroom").exists()
+
+
+def test_v2_candidate_refuses_execution_before_environment_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    artifact_root = tmp_path / "private"
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    monkeypatch.setattr(runner_module, "resolve_data_dir", lambda: live_root)
+    monkeypatch.setattr(runner_module, "tree_state_digest", lambda _: "0" * 64)
+
+    def forbidden_preflight(_: object) -> None:
+        raise AssertionError("environment preflight must not run")
+
+    monkeypatch.setattr(runner_module, "preflight_environment", forbidden_preflight)
+
+    with pytest.raises(PilotRunnerError, match="does not authorize provider execution"):
+        run_campaign(
+            artifact_root,
+            manifest=manifest,
+            live_agent_database=agent_dir / "agent.db",
+        )
+
+    assert not artifact_root.exists()
+
+
+def test_v2_runner_diagnosis_observes_frozen_failing_baseline(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    worktree = tmp_path / "worktree"
+    run_root = tmp_path / "run"
+    run_root.mkdir(mode=0o700)
+    materialize_task(manifest.tasks[0], worktree)
+
+    observed = _run_diagnosis(worktree, run_root)
+
+    diagnosis = json.loads((run_root / "diagnosis-result.json").read_text())
+    assert observed is True
+    assert diagnosis["baseline_failed"] is True
+    assert diagnosis["command"] == ["python3", "diagnose.py"]
+    assert diagnosis["returncode"] > 0
+    assert diagnosis["timed_out"] is False
+
+
+def test_v2_failed_diagnosis_stops_before_credential_or_omp_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    campaign_root = tmp_path / "campaign"
+    campaign_root.mkdir(mode=0o700)
+    run = manifest.run_order[0]
+    monkeypatch.setattr(runner_module, "_run_diagnosis", lambda *_: False)
+
+    with pytest.raises(PilotRunnerError, match="did not observe the frozen failing baseline"):
+        _execute_run(
+            manifest,
+            run,
+            campaign_root=campaign_root,
+            credential_snapshot=tmp_path / "missing-credential-snapshot.db",
+            gateway=cast(Any, object()),
+        )
+
+    assert not (campaign_root / "runs" / run.run_id / "agent").exists()

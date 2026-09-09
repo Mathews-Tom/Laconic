@@ -292,6 +292,10 @@ class BudgetLedger:
         forwarded_body = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
+        if len(forwarded_body) > _MAX_REQUEST_BYTES:
+            with self._lock:
+                self._stop("task_or_configuration_drift")
+            raise BudgetStoppedError("normalized request body exceeds the size limit")
         input_upper_bound = len(forwarded_body)
         reservation_cost = (
             Decimal(input_upper_bound) * self._rates["cache_write_1h"]
