@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from laconic.runtime.omp_installer import apply_omp_install
+from laconic.runtime.storage import resolve_data_dir
 from tools.controlled_spend.budget_gateway import BudgetGateway, GatewaySnapshot
 from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
@@ -32,7 +33,8 @@ from tools.controlled_spend.manifest import (
     validate_manifest_file,
 )
 
-_OMP_BINARY: Final = "omp"
+_OMP_PACKAGE: Final = "@oh-my-pi/pi-coding-agent"
+_HEADROOM_OMP_BINARY: Final = "omp"
 _HEADROOM_PACKAGE: Final = "headroom-ai[proxy]==0.37.0"
 _STATE_FILE: Final = "campaign-state.json"
 _RECEIPT_FILE: Final = "gateway-receipts.jsonl"
@@ -138,6 +140,38 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def tree_state_digest(root: Path) -> str:
+    """Hash a live tree's relative layout and bytes without following symlinks."""
+    digest = hashlib.sha256()
+    if not root.exists():
+        digest.update(b"m")
+        return digest.hexdigest()
+    if root.is_symlink() or not root.is_dir():
+        raise PilotRunnerError("live-state root is not an ordinary directory")
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise PilotRunnerError("live-state tree contains a symlink")
+        relative = path.relative_to(root).as_posix().encode()
+        digest.update(b"d" if path.is_dir() else b"f")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        if path.is_dir():
+            digest.update((0).to_bytes(8, "big"))
+            continue
+        if not path.is_file():
+            raise PilotRunnerError("live-state tree contains a special file")
+        size = path.stat().st_size
+        digest.update(size.to_bytes(8, "big"))
+        read_bytes = 0
+        with path.open("rb") as handle:
+            while block := handle.read(1024 * 1024):
+                read_bytes += len(block)
+                digest.update(block)
+        if read_bytes != size:
+            raise PilotRunnerError("live-state file changed while it was hashed")
+    return digest.hexdigest()
+
+
 def snapshot_agent_database(source: Path, destination: Path) -> str:
     """Create one transactionally consistent, owner-only SQLite snapshot."""
     try:
@@ -192,6 +226,26 @@ def _write_models_override(agent_dir: Path, gateway_url: str) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _pinned_omp_command(manifest: PilotManifest) -> list[str]:
+    omp = cast(dict[str, Any], manifest.payload["omp"])
+    return ["bunx", f"{_OMP_PACKAGE}@{omp['version']}"]
+
+
+def _write_pinned_omp_shim(run_root: Path, manifest: PilotManifest) -> Path:
+    bin_root = run_root / "bin"
+    _make_private_directory(bin_root, root=run_root)
+    path = bin_root / _HEADROOM_OMP_BINARY
+    package = _pinned_omp_command(manifest)[1]
+    body = f"#!/bin/sh\nexec bunx '{package}' \"$@\"\n".encode()
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o700)
+    try:
+        os.write(descriptor, body)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return path
 
 
 def _base_omp_args(
@@ -266,16 +320,17 @@ def build_run_command(
             _HEADROOM_PACKAGE,
             "headroom",
             "wrap",
-            "omp",
+            _HEADROOM_OMP_BINARY,
             "--port",
             str(headroom_port),
             "--",
             *args,
         ]
-    return [_OMP_BINARY, *args]
+    return [*_pinned_omp_command(manifest), *args]
 
 
 def build_run_environment(
+    manifest: PilotManifest,
     run: RunSpec,
     *,
     agent_dir: Path,
@@ -290,6 +345,8 @@ def build_run_environment(
     env["PI_NO_PTY"] = "1"
     env["NO_COLOR"] = "1"
     if run.arm == "headroom":
+        omp_shim = _write_pinned_omp_shim(run_root, manifest)
+        env["PATH"] = f"{omp_shim.parent}{os.pathsep}{env.get('PATH', '')}"
         headroom_root = run_root / "headroom"
         _make_private_directory(headroom_root, root=run_root)
         env.update(
@@ -403,7 +460,11 @@ def _preflight_binary(command: list[str], expected: str, label: str) -> None:
 def preflight_environment(manifest: PilotManifest) -> None:
     omp = cast(dict[str, Any], manifest.payload["omp"])
     headroom = cast(dict[str, Any], manifest.payload["headroom"])
-    _preflight_binary([_OMP_BINARY, "--version"], f"omp/{omp['version']}", "OMP")
+    _preflight_binary(
+        [*_pinned_omp_command(manifest), "--version"],
+        f"omp/{omp['version']}",
+        "OMP",
+    )
     _preflight_binary(
         ["uvx", "--from", _HEADROOM_PACKAGE, "headroom", "--version"],
         cast(str, headroom["version"]),
@@ -411,11 +472,18 @@ def preflight_environment(manifest: PilotManifest) -> None:
     )
 
 
-def _credential_preflight(agent_dir: Path, output_path: Path) -> None:
+def _credential_preflight(manifest: PilotManifest, agent_dir: Path, output_path: Path) -> None:
     env = dict(os.environ)
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
     completed = subprocess.run(
-        [_OMP_BINARY, "usage", "--provider", "anthropic", "--json", "--redact"],
+        [
+            *_pinned_omp_command(manifest),
+            "usage",
+            "--provider",
+            "anthropic",
+            "--json",
+            "--redact",
+        ],
         env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -498,6 +566,7 @@ def _execute_run(
         headroom_port=headroom_port,
     )
     env = build_run_environment(
+        manifest,
         run,
         agent_dir=agent_dir,
         run_root=run_root,
@@ -538,8 +607,18 @@ def run_campaign(
 ) -> dict[str, Any]:
     """Execute the frozen population once; any invalid cell terminates the campaign."""
     manifest = validate_manifest_file()
-    preflight_environment(manifest)
     root = artifact_root.expanduser().absolute()
+    source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
+    live_roots = {
+        "laconic_runtime": resolve_data_dir(),
+        "omp_agent": source_db.expanduser().absolute().parent,
+    }
+    if any(
+        root == live_root or root.is_relative_to(live_root) for live_root in live_roots.values()
+    ):
+        raise PilotRunnerError("artifact root must be outside every live-state root")
+    live_before = {name: tree_state_digest(path) for name, path in live_roots.items()}
+    preflight_environment(manifest)
     if root.exists():
         raise PilotRunnerError("artifact root already exists; pilot re-runs are not automatic")
     root.mkdir(parents=True, mode=0o700)
@@ -547,13 +626,13 @@ def run_campaign(
     _validate_private_directory(root)
     _make_private_directory(root / "runs", root=root)
 
-    source_db = live_agent_database or Path.home() / ".omp" / "agent" / "agent.db"
     credential_snapshot = root / _CREDENTIAL_SNAPSHOT
     credential_sha = snapshot_agent_database(source_db, credential_snapshot)
     state_path = root / _STATE_FILE
     state: dict[str, Any] = {
         "completed_runs": [],
         "credential_snapshot_sha256": credential_sha,
+        "live_state_before": live_before,
         "manifest_hash": manifest_digest(),
         "schema_version": 1,
         "status": "preflight",
@@ -566,7 +645,11 @@ def run_campaign(
         preflight_db = preflight_agent_dir / "agent.db"
         _copy_credential_snapshot(credential_snapshot, preflight_db)
         try:
-            _credential_preflight(preflight_agent_dir, root / "credential-preflight.json")
+            _credential_preflight(
+                manifest,
+                preflight_agent_dir,
+                root / "credential-preflight.json",
+            )
             os.replace(preflight_db, credential_snapshot)
             os.chmod(credential_snapshot, 0o600)
             state["credential_snapshot_sha256"] = _sha256(credential_snapshot)
@@ -609,8 +692,17 @@ def run_campaign(
             _atomic_private_json(state_path, state)
         raise
     finally:
+        active_error = sys.exception()
         credential_snapshot.unlink(missing_ok=True)
-        if credential_snapshot.exists():
+        cleanup_failed = credential_snapshot.exists()
+        live_after = {name: tree_state_digest(path) for name, path in live_roots.items()}
+        state["live_state_after"] = live_after
+        live_state_changed = live_after != live_before
+        if cleanup_failed or live_state_changed:
             state["status"] = "incomplete"
-            state["gateway_halted_reason"] = "private_artifact_cleanup_failed"
-            _atomic_private_json(state_path, state)
+            state["gateway_halted_reason"] = (
+                "private_artifact_cleanup_failed" if cleanup_failed else "live_state_changed"
+            )
+        _atomic_private_json(state_path, state)
+        if active_error is None and (cleanup_failed or live_state_changed):
+            raise PilotRunnerError(cast(str, state["gateway_halted_reason"]))
