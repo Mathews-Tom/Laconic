@@ -1,6 +1,6 @@
 # Controlled Spend Comparison — Design
 
-**Status: the one authorized variance pilot ran and ended with the pre-registered incomplete disposition.** The generated [public disposition](results/controlled-spend-pilot.md) is the canonical result. Dispersion, correlations, and confirmatory task count remain uncomputed. The no-restart rule prohibits rerunning or tuning this pilot, and no confirmatory run or savings claim is authorized.
+**Status: M20-v1 is immutable incomplete evidence; M20-v2 is an unexecuted candidate protocol.** The generated [M20-v1 public disposition](results/controlled-spend-pilot.md) is canonical under manifest `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`. It contains 0 valid cells, 3 attempted protocol-invalid cells, 21 unrun cells, $0.2289047 pooled gateway spend, and null dispersion, correlations, and confirmatory task count. M20-v1 may not be resumed, tuned, reinterpreted, or pooled into M20-v2. M20-v2 remains `execution_authorized: false`; no provider request, confirmatory run, or savings claim is authorized.
 
 ## 1. Why the existing measurement cannot answer the question
 
@@ -42,7 +42,7 @@ The primary statistical contrast is Laconic versus native OMP. The Headroom arm 
 
 *Per-session alternation* is rejected because ordinary sessions do different work. *Between-task arms* are rejected because task variance would be confounded with treatment. Every arm instead starts from the same task tree and receives the same prompt, model, thinking level, tools, request limit, wall-clock limit, and completion oracle.
 
-The variance pilot freezes four deterministic tasks and two repetitions per task/arm: 24 maximum task runs. All three arm orders within each `(task, repetition)` block come from one committed random seed. The task list, source digests, prompts, completion oracles, arm orders, metric, estimator, action threshold, limits, privacy fields, and stopping rules are committed before the credential probe or first paid arm. Adding, dropping, restarting, or tuning a cell after any paid result invalidates the pilot.
+M20-v1 froze four deterministic tasks and two repetitions per task/arm: 24 maximum task runs. Its task list, source digests, prompts, completion oracles, arm orders, metric, estimator, action threshold, limits, privacy fields, and stopping rules remain immutable. M20-v2 keeps that population and analysis contract but uses distinct prompt paths, a new deterministic arm-order seed, a separate manifest and private root, and only the mechanical amendments in §10. Adding, dropping, restarting, tuning, or importing a v1 observation after any paid result invalidates v2.
 
 This pilot freeze is distinct from a confirmatory pre-registration. The confirmatory sample cannot be fixed until the pilot supplies paired dispersion. A later confirmatory manifest must fix its sample and spend cap before its first arm and requires a new explicit owner authorization.
 
@@ -86,36 +86,51 @@ The owner fixed 10% before any pilot result. For the primary contrast, the confi
 
 The log scale maps the 10% product threshold directly and prevents one expensive task from outweighing many cheaper tasks. Headroom uses a separately labelled paired log-cost difference and is not part of the primary power calculation.
 
-The required sequence is:
+The required sequence for M20-v2 is:
 
-1. Run the frozen four-task, two-repeat, three-arm pilot.
-2. Require all 24 cells to complete and pass their oracles. Any missing cell, differential completion, mechanism failure, state drift, spend-cap refusal, or unparseable usage yields an incomplete disposition and no variance output.
-3. Keep arm means, absolute differences, paired effect estimates, and per-arm cost components in private analysis state. Publish only the standard deviation of the paired task differences, the cross-arm cost correlation, completeness/mechanism counters, frozen parameters, and the sample-feasibility output.
-4. Compute a preliminary task count for the primary Laconic/native confirmatory study at two-sided alpha 0.05 and power 0.80, using the frozen 10% log threshold and the pilot `SD(d)`. The calculation assumes the confirmatory study keeps the pilot's two repetitions per task; changing *k* requires a new variance model rather than reusing this task count. State the normal approximation, round up, and apply a two-task minimum because a paired-difference dispersion is not estimable from one task.
-5. If the required sample or projected spend is operationally infeasible, stop. If feasible, write and commit a new confirmatory manifest and obtain a new explicit spend authorization before any confirmatory arm.
+1. Commit a distinct, execution-disabled manifest before any credential probe or provider call.
+2. Run the frozen four-task, two-repeat, three-arm candidate only after the owner explicitly authorizes the exact manifest hash and maximum reserved-spend calculation.
+3. Require all 24 cells to be valid. Any unrun cell, task-completion failure, protocol failure, mechanism non-engagement, state drift, spend-cap refusal, or unparseable usage yields an incomplete disposition and no statistical output.
+4. Keep arm means, absolute differences, paired effect estimates, and per-arm cost components in private analysis state. Publish only the sample standard deviation of paired task differences, cross-arm correlations, truthful completeness/failure counters, frozen parameters, and sample-feasibility output.
+5. Compute a preliminary task count for the primary Laconic/native confirmatory study at two-sided alpha 0.05 and power 0.80, using the frozen 10% log threshold and `SD(d)`, only after all 24 cells are valid. The calculation assumes two repetitions per task, uses the normal approximation, rounds up, and applies a two-task minimum.
+6. If the required sample or projected spend is operationally infeasible, stop. If feasible, commit a separate confirmatory manifest and obtain new explicit spend authorization before any confirmatory arm.
 
-The pilot is not a performance result. Its point estimate is not reported, quoted, used to select tasks, or used to change the 10% threshold.
+Neither variance pilot is a performance result. No v1 or v2 point estimate may be reported, quoted, used to select tasks, or used to change the 10% threshold.
 
 ## 8. Falsification and stopping
 
 The later confirmatory hypothesis is: *for tasks from the pre-registered workload, Laconic reduces total OMP-modelled cost per completed task by at least the product-relevant threshold without reducing completion.*
 
-The variance pilot does not test that hypothesis. It stops without an effect estimate if any frozen validity condition fails: a task tree or prompt drifts; an arm does not use the pinned model/configuration; completion differs; a Laconic or Headroom mechanism cannot be verified; usage is missing; the gateway cannot reserve spend before forwarding; a request would exceed $10; live OMP or dogfood state changes; or private data reaches a public artifact.
+Neither variance pilot tests that hypothesis. M20-v2 stops without statistics if a task tree or prompt drifts; the deterministic runner-side diagnosis does not observe the frozen failing baseline; an arm does not use the pinned model/configuration; provider usage is missing or malformed; the gateway cannot reserve spend before forwarding; the 16-request per-cell ceiling, 180-second wall limit, or $10 total cap is reached; completion fails; a Laconic or Headroom mechanism does not engage; live OMP or dogfood state changes; credential cleanup fails; or private data reaches a public artifact.
 
 A future confirmatory result falsifies the product-relevant savings claim for this workload if the pre-registered interval favors native OMP or lies wholly inside the ±10% equivalence bounds, or if Laconic completes fewer tasks than the frozen tolerance permits. A null or negative result does not terminate the runtime product: its beta gate is safety, not savings.
 
-## 9. Authorization
+## 9. M20-v1 historical disposition
 
-The pilot may run only when every condition below is satisfied:
+M20-v1 ran once under H-99 and stopped under its frozen invalid-cell rule. All three attempted task oracles passed and all three mechanisms engaged. Each attempted model changed the literal first command, and one attempted a ninth provider request after eight successful requests. Those operational failures still invalidate all three cells under v1. The public v1 schema historically represents the 21 unrun cells as completion failures and the 3 attempted invalid cells as mechanism failures; that frozen wording is preserved for byte compatibility and must not be treated as the corrected taxonomy.
 
-1. **Satisfied — informed sign-off and fresh instruction.** H-99 records the owner's review of the M19 composition/limitations/privacy/design packet and the explicit instruction to implement and run the recommended comparison.
-2. **Satisfied — pilot pre-registration committed before spend.** The canonical manifest hash is `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`; it pins all tasks, repeats, 24 arm orders, model/catalog, price authority, metric, estimator, 10% threshold, limits, privacy schema, $10 cap, and stopping rules.
-3. **Satisfied — enforced cap verified without provider spend.** The loopback gateway reserves the frozen worst-case request amount before forwarding, stops before a request that could cross $10, charges the reservation on missing or malformed usage, and enforces the eight-request cell limit. Streaming and non-streaming fake-upstream tests exercise the boundary.
-4. **Satisfied — disposable isolation.** Every attempted arm ran in an owner-only isolated OMP directory and disposable Git repository. The campaign's before/after digest for the live OMP tree matched.
-5. **Satisfied — uninterrupted dogfood.** The campaign's before/after runtime-store digest matched, and `laconic-dogfood-check` passed before and after execution.
+The canonical v1 manifest hash is `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`. Its public JSON and Markdown, fixture prompts, source digests, private state, and null statistics are immutable. M20-v1 observations cannot be reused in M20-v2 or any effect, dispersion, correlation, or confirmatory-sample calculation.
 
-The confirmatory study is not authorized by satisfying these pilot conditions.
+## 10. M20-v2 mechanical amendment
 
-## 10. What this document authorizes
+The owner approved these changes before the v2 manifest was committed:
 
-This design authorizes implementation of the bounded harness and one frozen variance pilot under H-99. It does not authorize a confirmatory run, post-result tuning or restarts, public arm costs or effect estimates, a token/cost savings claim, a Laconic-versus-Headroom superiority claim, `laconic.costs` repricing, release preparation, tagging, or publication.
+- execute `python3 diagnose.py` in the runner before OMP starts and require the frozen failing baseline;
+- exclude that deterministic diagnosis from provider usage and task-cost accounting;
+- remove the literal first-command instruction from distinct v2 prompts and treat subsequent agent tool choice as measured behavior;
+- increase only the per-cell provider-request ceiling from 8 to 16, retaining the 180-second wall limit and conservative cumulative reservation under the unchanged $10 campaign cap;
+- publish distinct counters for attempted cells, valid cells, unrun cells, task-completion failures, protocol failures, and mechanism non-engagement;
+- use a new schema version, campaign identifier, deterministic arm-order seed, exact public keys, prompt paths and digests, stopping rules, and private root;
+- fail closed with `execution_authorized: false` until the owner separately authorizes provider execution against the exact committed v2 hash.
+
+The unchanged contract is the four task seeds and completion oracles, OMP 18.1.14 package pin, `anthropic/claude-sonnet-5`, Headroom 0.37.0 coding profile, two repetitions, official price snapshot, 10% action threshold, alpha 0.05, power 0.80, privacy boundary, 180-second wall limit, and $10 total campaign cap.
+
+V2 counters form a disjoint disposition. `attempted_cells + unrun_cells = 24`. Among attempted cells, protocol failure takes precedence when any diagnosis, provider/model/usage, request/time/cap, fixture, live-state, or cleanup invariant fails; task-completion failure applies only after protocol validity; mechanism non-engagement applies only after protocol and completion validity; otherwise the cell is valid. Therefore `valid_cells + task_completion_failures + protocol_failures + mechanism_non_engagement = attempted_cells`. Statistics remain null unless `attempted_cells = valid_cells = 24` and every failure counter is zero.
+
+Semantic first-command validation was rejected because shell qualification, wrappers, quoting, and command chaining would leave validity model-controlled. A fixed per-cell dollar reservation was rejected because it duplicates the cumulative gateway, arbitrarily allocates `$10 / 24`, can strand unused budget, and can censor cells by request shape.
+
+## 11. Authorization
+
+This document authorizes the no-provider readiness stack: tracked protocol changes, explicit manifest routing, v2-only prompts and manifest, deterministic runner checks, fake-upstream gateway verification, synthetic analysis/privacy checks, mutation tests, reviews, commits, pushes, and open dependent PRs.
+
+It does not authorize a model credential probe, provider request, campaign execution, merge, M20-v1 or private-root mutation, reuse of v1 observations, public arm costs or effects, a token/cost savings claim, a Laconic-versus-Headroom superiority claim, `laconic.costs` repricing, version bump, release preparation, tagging, PyPI upload, or GitHub Release. A paid M20-v2 run requires a new explicit owner instruction after review of the exact committed v2 manifest hash and maximum reserved-spend calculation.

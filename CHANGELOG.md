@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Corrected the current-state claims in `README.md`, `docs/grounding.md`, `docs/overview.md`, `docs/pitch.md`, `docs/system-design.md`, `docs/omp-runtime.md`, and `docs/research-disposition.md`. They still described the runtime as an unreleased candidate awaiting a manual tag, PyPI upload, and GitHub Release, named `0.8.0` as the published version, and told readers to install the runtime from a source checkout. `v0.9.0` and `v0.9.1` are both published, and `uv tool install laconic` is the install path.
 - Replaced the retired prose-rendering public position with the shipped runtime-codec identity, added an evidence-bounded comparison with Headroom 0.37.0, and documented where Laconic's OMP-native interception, file-read scoping, durable exact recovery, fail-open boundary, and no-upload default differ from Headroom's broader proxy, SDK, MCP, memory, and output-shaping platform.
+- Distinguished the immutable incomplete M20-v1 evidence from the unexecuted M20-v2 candidate protocol. V1 retains its original manifest, prompts, public bytes, and null statistics; v2 preregisters only mechanical validity and failure-taxonomy corrections and requires separate provider authorization.
 
 ## [0.9.1] — 2026-09-06
 
