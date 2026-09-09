@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from tools.controlled_spend.analysis import check_report, generate_report
 from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
     manifest_digest,
@@ -25,6 +26,14 @@ def _parser() -> argparse.ArgumentParser:
     pilot_commands.add_parser("preflight", help="validate pinned local executables")
     run = pilot_commands.add_parser("run", help="execute every frozen cell once")
     run.add_argument("--artifact-root", type=Path, required=True)
+    report = pilot_commands.add_parser("report", help="generate public pilot artifacts")
+    report.add_argument("--artifact-root", type=Path, required=True)
+    report.add_argument("--output-json", type=Path, required=True)
+    report.add_argument("--output-markdown", type=Path, required=True)
+    report_check = pilot_commands.add_parser("check", help="verify public pilot artifacts")
+    report_check.add_argument("--artifact-root", type=Path, required=True)
+    report_check.add_argument("--report-json", type=Path, required=True)
+    report_check.add_argument("--report-markdown", type=Path, required=True)
     return parser
 
 
@@ -53,6 +62,28 @@ def main() -> int:
         print(
             f"status={state['status']} completed={len(state['completed_runs'])} "
             f"spend_usd={state['gateway_spent_usd']}"
+        )
+        return 0
+    if args.command == "pilot" and args.pilot_command == "report":
+        report = generate_report(
+            args.artifact_root,
+            args.output_json,
+            args.output_markdown,
+        )
+        print(
+            f"verdict={report['verdict']} runs={report['run_count']}/"
+            f"{report['expected_run_count']} spend_usd={report['gateway_spend_usd']}"
+        )
+        return 0
+    if args.command == "pilot" and args.pilot_command == "check":
+        report = check_report(
+            args.artifact_root,
+            args.report_json,
+            args.report_markdown,
+        )
+        print(
+            f"verdict={report['verdict']} runs={report['run_count']}/"
+            f"{report['expected_run_count']} report=verified"
         )
         return 0
     raise AssertionError("unreachable command")

@@ -1,6 +1,6 @@
 # Controlled Spend Comparison — Design
 
-**Status: owner-authorized variance pilot; implementation and paid execution pending.** H-99 records the M19 human review sign-off, the fresh instruction to implement and run one bounded pilot, and the owner's fixed choices: a $10 total provider-spend cap, Claude Sonnet 5, and a 10% smallest effect worth acting on. This authorization does not extend to a confirmatory run or a savings claim.
+**Status: owner-authorized variance pilot; harness implemented and paid execution pending.** H-99 records the M19 human review sign-off, the fresh instruction to implement and run one bounded pilot, and the owner's fixed choices: a $10 total provider-spend cap, Claude Sonnet 5, and a 10% smallest effect worth acting on. This authorization does not extend to a confirmatory run or a savings claim.
 
 ## 1. Why the existing measurement cannot answer the question
 
@@ -91,7 +91,7 @@ The required sequence is:
 1. Run the frozen four-task, two-repeat, three-arm pilot.
 2. Require all 24 cells to complete and pass their oracles. Any missing cell, differential completion, mechanism failure, state drift, spend-cap refusal, or unparseable usage yields an incomplete disposition and no variance output.
 3. Keep arm means, absolute differences, paired effect estimates, and per-arm cost components in private analysis state. Publish only the standard deviation of the paired task differences, the cross-arm cost correlation, completeness/mechanism counters, frozen parameters, and the sample-feasibility output.
-4. Compute a preliminary task count for the primary Laconic/native confirmatory study at two-sided alpha 0.05 and power 0.80, using the frozen 10% log threshold and the pilot `SD(d)`. The calculation assumes the confirmatory study keeps the pilot's two repetitions per task; changing *k* requires a new variance model rather than reusing this task count. State the approximation and round up.
+4. Compute a preliminary task count for the primary Laconic/native confirmatory study at two-sided alpha 0.05 and power 0.80, using the frozen 10% log threshold and the pilot `SD(d)`. The calculation assumes the confirmatory study keeps the pilot's two repetitions per task; changing *k* requires a new variance model rather than reusing this task count. State the normal approximation, round up, and apply a two-task minimum because a paired-difference dispersion is not estimable from one task.
 5. If the required sample or projected spend is operationally infeasible, stop. If feasible, write and commit a new confirmatory manifest and obtain a new explicit spend authorization before any confirmatory arm.
 
 The pilot is not a performance result. Its point estimate is not reported, quoted, used to select tasks, or used to change the 10% threshold.
@@ -109,8 +109,8 @@ A future confirmatory result falsifies the product-relevant savings claim for th
 The pilot may run only when every condition below is satisfied:
 
 1. **Satisfied — informed sign-off and fresh instruction.** H-99 records the owner's review of the M19 composition/limitations/privacy/design packet and the explicit instruction to implement and run the recommended comparison.
-2. **Pending until committed — pilot pre-registration.** The manifest must pin all tasks, repeats, 24 arm orders, model/catalog, price authority, metric, estimator, 10% threshold, limits, privacy schema, $10 cap, and stopping rules before the credential probe or first paid arm.
-3. **Pending until verified — enforced cap.** The gateway must reserve a conservative request maximum before forwarding and refuse a request that could exceed $10. Intention, wall-clock timeout, or post-run accounting is not enforcement.
+2. **Satisfied — pilot pre-registration committed before spend.** The canonical manifest hash is `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`; it pins all tasks, repeats, 24 arm orders, model/catalog, price authority, metric, estimator, 10% threshold, limits, privacy schema, $10 cap, and stopping rules.
+3. **Satisfied — enforced cap verified without provider spend.** The loopback gateway reserves the frozen worst-case request amount before forwarding, stops before a request that could cross $10, charges the reservation on missing or malformed usage, and enforces the eight-request cell limit. Streaming and non-streaming fake-upstream tests exercise the boundary.
 4. **Required — disposable isolation.** Every arm runs in an owner-only isolated OMP directory and disposable Git repository. It never changes the owner's live OMP profile, worktree, runtime ledger store, or ordinary sessions.
 5. **Required — uninterrupted dogfood.** The collection already running is neither disabled nor used as an arm. Before/after state digests and `laconic-dogfood-check` must remain clean.
 
