@@ -165,8 +165,8 @@ def test_v2_manifest_is_distinct_and_fail_closed() -> None:
     v2 = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
 
     assert v1.digest == "a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44"
-    assert v2.digest == "526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f"
-    assert set(v2.payload) - set(v1.payload) == {"execution_authorized"}
+    assert v2.digest == "324f8901b73f73dd5e1285c8b374c9e3bcdfcba33a97148a1eb4abbfe109a288"
+    assert set(v2.payload) - set(v1.payload) == {"execution_authorized", "live_state"}
     assert v2.payload["execution_authorized"] is False
     assert v2.payload["limits"]["provider_requests_per_run"] == 16
     assert v2.payload["stopping_rules"][0] == "runner_diagnosis_failed"
@@ -178,6 +178,31 @@ def test_v2_manifest_is_distinct_and_fail_closed() -> None:
             manifest_module.FIXTURES_ROOT / v2_task.task_id / v2_task.prompt_file
         ).read_text()
         assert "diagnose.py" not in v2_prompt
+
+
+def test_v2_ambient_allowlist_is_frozen_and_excludes_the_credential_database() -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    matcher = manifest_module.ambient_paths(manifest)
+
+    assert manifest.payload["live_state"]["roots"] == ["laconic_runtime", "omp_agent"]
+    assert matcher.fullmatch("omp_agent/agent.db") is None
+    assert matcher.fullmatch("omp_agent/agent.db-wal") is not None
+    assert matcher.fullmatch("omp_agent/sessions/proj/2026.jsonl") is not None
+    assert matcher.fullmatch("omp_agent/cache/composer/abc/status.json") is not None
+    assert matcher.fullmatch("omp_agent/memories/mnemopi/banks/x/mnemopi.db-wal") is not None
+    assert matcher.fullmatch("omp_agent/managed-skills/some-skill/SKILL.md") is not None
+    assert matcher.fullmatch("omp_agent/extensions/laconic.ts") is None
+    assert matcher.fullmatch("omp_agent/models.yml") is None
+    assert matcher.fullmatch("laconic_runtime/observe/audit.jsonl") is not None
+    assert matcher.fullmatch("laconic_runtime/sessions/abc.sqlite3") is not None
+    assert matcher.fullmatch("laconic_runtime/sessions/nested/abc.sqlite3") is None
+    assert matcher.fullmatch("laconic_runtime/ledger.sqlite3") is None
+    assert matcher.fullmatch("omp_agent/extensions/laconic.ts") is None
+
+
+def test_ambient_allowlist_matching_the_credential_database_is_rejected() -> None:
+    with pytest.raises(ManifestError, match="never match the credential database"):
+        manifest_module.compile_ambient_paths(("omp_agent/agent.db*",))
 
 
 @pytest.mark.parametrize(
@@ -198,6 +223,14 @@ def test_v2_manifest_is_distinct_and_fail_closed() -> None:
         (
             lambda payload: payload["tasks"][0].__setitem__("prompt_file", "PROMPT.txt"),
             "layout differs",
+        ),
+        (
+            lambda payload: payload["live_state"]["ambient_paths"].append("omp_agent/**"),
+            "ambient_paths differ",
+        ),
+        (
+            lambda payload: payload["live_state"].__setitem__("roots", ["omp_agent"]),
+            "roots differ",
         ),
     ],
 )

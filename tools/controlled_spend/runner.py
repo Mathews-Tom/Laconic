@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -31,6 +32,7 @@ from tools.controlled_spend.manifest import (
     Arm,
     PilotManifest,
     RunSpec,
+    ambient_paths,
     canonical_json,
     materialize_task,
     tree_digest,
@@ -148,47 +150,77 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def tree_state_digest(root: Path) -> str:
-    """Hash a live tree's relative layout and bytes without following symlinks."""
+@dataclass(frozen=True, slots=True)
+class LiveStateSnapshot:
+    """One attributed view of a live root: non-ambient digest plus ambient entries."""
+
+    digest: str
+    ambient: dict[str, str]
+
+
+def live_state_snapshot(
+    root: Path,
+    *,
+    prefix: str = "",
+    ambient: re.Pattern[str] | None = None,
+) -> LiveStateSnapshot:
+    """Hash a live tree without following symlinks, attributing declared ambient paths.
+
+    Entries whose `<prefix>/<relative>` name matches the ambient allowlist are excluded
+    from the returned digest and recorded separately, so ordinary local agent activity
+    cannot invalidate a campaign while any other change still does.
+    """
     digest = hashlib.sha256()
+    ambient_entries: dict[str, str] = {}
     if not root.exists():
         digest.update(b"m")
-        return digest.hexdigest()
+        return LiveStateSnapshot(digest=digest.hexdigest(), ambient=ambient_entries)
     if root.is_symlink() or not root.is_dir():
         raise PilotRunnerError("live-state root is not an ordinary directory")
     for path in sorted(root.rglob("*")):
-        relative = path.relative_to(root).as_posix().encode()
+        name = path.relative_to(root).as_posix()
+        relative = name.encode()
+        qualified = f"{prefix}/{name}" if prefix else name
+        entry = hashlib.sha256()
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode):
             target = os.fsencode(os.readlink(path))
-            digest.update(b"l")
-            digest.update(len(relative).to_bytes(4, "big"))
-            digest.update(relative)
-            digest.update(len(target).to_bytes(8, "big"))
-            digest.update(target)
-            continue
-        if stat.S_ISDIR(metadata.st_mode):
-            digest.update(b"d")
-            digest.update(len(relative).to_bytes(4, "big"))
-            digest.update(relative)
-            digest.update((0).to_bytes(8, "big"))
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
+            entry.update(b"l")
+            entry.update(len(relative).to_bytes(4, "big"))
+            entry.update(relative)
+            entry.update(len(target).to_bytes(8, "big"))
+            entry.update(target)
+        elif stat.S_ISDIR(metadata.st_mode):
+            entry.update(b"d")
+            entry.update(len(relative).to_bytes(4, "big"))
+            entry.update(relative)
+            entry.update((0).to_bytes(8, "big"))
+        elif not stat.S_ISREG(metadata.st_mode):
             raise PilotRunnerError("live-state tree contains a special file")
-        digest.update(b"f")
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        size = metadata.st_size
-        digest.update(size.to_bytes(8, "big"))
-        read_bytes = 0
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(descriptor, "rb") as handle:
-            while block := handle.read(1024 * 1024):
-                read_bytes += len(block)
-                digest.update(block)
-        if read_bytes != size:
-            raise PilotRunnerError("live-state file changed while it was hashed")
-    return digest.hexdigest()
+        else:
+            entry.update(b"f")
+            entry.update(len(relative).to_bytes(4, "big"))
+            entry.update(relative)
+            size = metadata.st_size
+            entry.update(size.to_bytes(8, "big"))
+            read_bytes = 0
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as handle:
+                while block := handle.read(1024 * 1024):
+                    read_bytes += len(block)
+                    entry.update(block)
+            if read_bytes != size:
+                raise PilotRunnerError("live-state file changed while it was hashed")
+        if ambient is not None and ambient.fullmatch(qualified):
+            ambient_entries[qualified] = entry.hexdigest()
+            continue
+        digest.update(entry.digest())
+    return LiveStateSnapshot(digest=digest.hexdigest(), ambient=ambient_entries)
+
+
+def tree_state_digest(root: Path) -> str:
+    """Hash a whole live tree with no ambient attribution."""
+    return live_state_snapshot(root).digest
 
 
 def snapshot_agent_database(source: Path, destination: Path) -> str:
@@ -702,7 +734,12 @@ def run_campaign(
         raise PilotRunnerError("artifact root must be outside every live-state root")
     if root.exists():
         raise PilotRunnerError("artifact root already exists; pilot re-runs are not automatic")
-    live_before = {name: tree_state_digest(path) for name, path in live_roots.items()}
+    ambient = ambient_paths(manifest)
+    before_snapshots = {
+        name: live_state_snapshot(path, prefix=name, ambient=ambient)
+        for name, path in live_roots.items()
+    }
+    live_before = {name: snapshot.digest for name, snapshot in before_snapshots.items()}
     preflight_environment(manifest)
     root.mkdir(parents=True, mode=0o700)
     os.chmod(root, 0o700)
@@ -787,8 +824,22 @@ def run_campaign(
     finally:
         active_error = sys.exception()
         cleanup_failed = not _cleanup_credential_snapshot(credential_snapshot)
-        live_after = {name: tree_state_digest(path) for name, path in live_roots.items()}
+        after_snapshots = {
+            name: live_state_snapshot(path, prefix=name, ambient=ambient)
+            for name, path in live_roots.items()
+        }
+        live_after = {name: snapshot.digest for name, snapshot in after_snapshots.items()}
         state["live_state_after"] = live_after
+        state["live_state_ambient_changes"] = sum(
+            len(
+                {
+                    path
+                    for path, _ in set(before_snapshots[name].ambient.items())
+                    ^ set(after_snapshots[name].ambient.items())
+                }
+            )
+            for name in live_roots
+        )
         live_state_changed = live_after != live_before
         if cleanup_failed or live_state_changed:
             state["status"] = "incomplete"
