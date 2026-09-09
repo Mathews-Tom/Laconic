@@ -4,7 +4,7 @@
 
 Laconic sits at the **tool-result boundary** of an existing coding agent. The first runtime product is an explicitly installed OMP extension backed by one session-owned Python engine. The host adapter owns the session-scoped engine process lifecycle and result mutation; the engine owns encoding, recovery, decisions, and local storage.
 
-The published version 0.9.1 contains the OMP runtime shown below; M18 qualification has passed and its human review gate is signed. Versions up to 0.8.0 had no live codec integration.
+Version 0.10.0's installable package contains the OMP runtime shown below and read-only spend-composition reporting. The source repository also contains execution-disabled controlled-spend research tooling. M18 qualification passed and its human review gate is signed. Versions up to 0.8.0 had no live codec integration.
 
 ```mermaid
 graph TB
@@ -49,7 +49,7 @@ Thin adapters share this canonical engine. OMP is first. Claude Code requires a 
 ---
 ## 2. Component Design
 
-**Maturity boundary:** version 0.9.1 releases the codec, ledger, replay, renderer, action codec, residency decision accounting, the session runtime, the namespaced envelope, the OMP adapter, and operator controls. Action rewriting and applied residency compaction are not part of the beta.
+**Maturity boundary:** version 0.10.0 packages the codec, ledger, replay, renderer, action codec, residency decision accounting, session runtime, namespaced envelope, OMP adapter, operator controls, and read-only research reporting. It does not authorize M20-v2 provider execution. Action rewriting and applied residency compaction are not part of the beta.
 
 ### 2.1 Handle ledger (`src/laconic/ledger.py`)
 

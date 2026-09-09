@@ -1,6 +1,6 @@
 # Laconic – Compress what a coding agent carries, not what it says.
 
-> **Status: the opt-in OMP runtime beta is published as v0.9.1.** The package contains the opt-in OMP extension, session-owned Python engine, exact namespaced recovery, fail-open boundary, and operator CLI. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
+> **Status: the opt-in OMP runtime beta is published.** Version 0.10.0 adds read-only spend-composition reporting to the installable package. The repository also records the immutable incomplete M20-v1 result and an execution-disabled M20-v2 protocol. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
 
 Laconic is a private, local runtime codec for existing coding agents. It reduces eligible model-visible `read`, `bash`, `grep`, and `glob` observations while preserving exact, on-demand access to omitted content. It integrates with OMP rather than replacing it.
 
@@ -41,11 +41,11 @@ Start OMP normally. Use `/laconic status|pause|resume` in the active session, `l
 | [`docs/k1-stage-b-manifest-cli.md`](docs/k1-stage-b-manifest-cli.md) | `laconic research k1 stage-b build-manifest` guide |
 | [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md) | The qualification campaign's generated aggregate report, committed verbatim |
 | [`docs/runtime-beta-runbook.md`](docs/runtime-beta-runbook.md) | How that campaign is frozen, run, and reported with `python -m laconic.beta` |
-| [`docs/spend-comparison-design.md`](docs/spend-comparison-design.md) | What a controlled codec-on/off comparison would require. Designed, not implemented, not authorized |
+| [`docs/spend-comparison-design.md`](docs/spend-comparison-design.md) | Controlled-spend design, immutable incomplete M20-v1 result, and execution-disabled M20-v2 protocol |
 
 ## Source checkout
 
-Published version 0.9.1 contains the runtime, the codec, evaluation, rendering, and Observe surfaces. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
+Releases from 0.9.0 onward contain the runtime, codec, evaluation, rendering, and Observe surfaces. Version 0.10.0 adds read-only spend-composition reporting to the installable package and versions repository-only controlled-spend research tooling; M20-v2 remains execution-disabled. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
 
 ```bash
 uv run laconic research measure tests/corpus --expect tests/corpus/expected.json
@@ -61,7 +61,7 @@ The committed fixture reports K1 net savings of 8.53% against its pre-registered
 2. ~~Package an ownership-safe OMP extension with a 250 ms deadline, fail-open behavior, expansion, and operator controls.~~
 3. ~~Qualify the built package through at least 10 completed real OMP sessions across 3 repositories and at least 100 eligible observations.~~
 4. ~~Publish the opt-in OMP beta.~~ Published as `v0.9.0`, with `v0.9.1` correcting a cold-start defect that only a clean first install could reach.
-5. Measure where model spend actually goes in real sessions before deciding whether any token or cost claim is supportable. Composition first; a controlled on/off comparison is a separate step that is not authorized.
+5. ~~Measure where model spend goes and build a controlled-comparison protocol without overclaiming.~~ The single-arm composition report contains no savings figure; M20-v1 ended incomplete; M20-v2 remains execution-disabled pending separate authorization.
 6. Design the Claude Code adapter separately after the protocol survives OMP dogfood. MCP, action rewriting, and history compaction remain deferred.
 
 ## License

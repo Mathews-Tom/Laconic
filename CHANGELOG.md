@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-09
+
 ### Added
 
 - `laconic research spend report` reads OMP session usage and the runtime ledger, both strictly read-only, and reports where model spend actually went in this machine's own sessions alongside what the codec did in those same sessions. Output goes to the git-ignored `.laconic/spend/` as deterministic JSON and Markdown, guarded by an exact-key privacy allowlist that also refuses a report whose limitations block has been weakened.
@@ -132,7 +134,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Initial packaging, lint, strict typing, test, and CI surface, with an importable `laconic` package and a `laconic` console script exposing `--version` and `--help`.
 
-[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.7.0...v0.8.0
