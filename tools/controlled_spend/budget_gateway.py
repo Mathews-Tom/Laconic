@@ -509,7 +509,7 @@ class BudgetGateway(AbstractContextManager["BudgetGateway"]):
 
     @property
     def port(self) -> int:
-        return cast(int, self._server.server_port)
+        return self._server.server_port
 
     def base_url(self, run_id: str) -> str:
         if not re.fullmatch(r"r\d{3}", run_id):

@@ -16,7 +16,7 @@ from tools.controlled_spend.budget_gateway import (
     BudgetStoppedError,
     parse_anthropic_usage,
 )
-from tools.controlled_spend.manifest import validate_manifest_file
+from tools.controlled_spend.manifest import DEFAULT_MANIFEST_PATH, validate_manifest_file
 
 
 def _request_body(*, padding: str = "") -> bytes:
@@ -72,7 +72,9 @@ def test_sse_usage_combines_message_start_and_delta() -> None:
 
 
 def test_total_cap_is_reserved_before_a_second_large_request(tmp_path: Path) -> None:
-    ledger = BudgetLedger(validate_manifest_file(), tmp_path / "receipts.jsonl")
+    ledger = BudgetLedger(
+        validate_manifest_file(DEFAULT_MANIFEST_PATH), tmp_path / "receipts.jsonl"
+    )
     first = ledger.reserve("r001", _request_body(padding="x" * 1_500_000))
 
     with pytest.raises(BudgetStoppedError, match="exceed total cap"):
@@ -83,7 +85,9 @@ def test_total_cap_is_reserved_before_a_second_large_request(tmp_path: Path) -> 
 
 
 def test_per_run_request_limit_stops_before_ninth_request(tmp_path: Path) -> None:
-    ledger = BudgetLedger(validate_manifest_file(), tmp_path / "receipts.jsonl")
+    ledger = BudgetLedger(
+        validate_manifest_file(DEFAULT_MANIFEST_PATH), tmp_path / "receipts.jsonl"
+    )
     reservations = [ledger.reserve("r001", _request_body()) for _ in range(8)]
 
     with pytest.raises(BudgetStoppedError, match="per-run provider request limit"):
@@ -95,7 +99,7 @@ def test_per_run_request_limit_stops_before_ninth_request(tmp_path: Path) -> Non
 
 
 def test_receipt_reload_accepts_out_of_order_concurrent_completions(tmp_path: Path) -> None:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     receipt_path = tmp_path / "receipts.jsonl"
     ledger = BudgetLedger(manifest, receipt_path)
     first = ledger.reserve("r001", _request_body())
@@ -140,7 +144,7 @@ def test_gateway_rewrites_output_cap_and_records_content_free_usage(tmp_path: Pa
         upstream_url = f"http://127.0.0.1:{upstream.server_port}"
         receipt_path = tmp_path / "receipts.jsonl"
         with BudgetGateway(
-            validate_manifest_file(), receipt_path, upstream_url=upstream_url
+            validate_manifest_file(DEFAULT_MANIFEST_PATH), receipt_path, upstream_url=upstream_url
         ) as gateway:
             connection = http.client.HTTPConnection("127.0.0.1", gateway.port, timeout=5)
             connection.request(

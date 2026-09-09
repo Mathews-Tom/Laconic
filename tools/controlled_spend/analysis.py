@@ -16,15 +16,7 @@ from typing import Any, Final, cast
 
 from laconic.runtime.operator import runtime_storage_status
 from laconic.spend.omp import MalformedSessionError, load_session
-from tools.controlled_spend.manifest import (
-    ARMS,
-    Arm,
-    PilotManifest,
-    RunSpec,
-    canonical_json,
-    manifest_digest,
-    validate_manifest_file,
-)
+from tools.controlled_spend.manifest import ARMS, Arm, PilotManifest, RunSpec, canonical_json
 from tools.controlled_spend.privacy import validate_public_report
 
 _PRIVATE_REPORT_NAME: Final = "analysis-private.json"
@@ -324,19 +316,19 @@ def _complete_analysis(
         "confirmatory_task_count_at_two_repeats": task_count,
         "expected_run_count": len(manifest.run_order),
         "gateway_spend_usd": float(gateway_spend),
-        "manifest_hash": manifest_digest(),
+        "manifest_hash": manifest.digest,
         "mechanism_failures": 0,
         "native_headroom_correlation": _rounded(headroom_correlation),
         "native_laconic_correlation": _rounded(laconic_correlation),
         "paired_log_cost_sd": _rounded(dispersion),
         "power": power,
         "run_count": len(metrics),
-        "schema_version": 1,
+        "schema_version": manifest.payload["schema_version"],
         "total_cap_usd": float(cast(dict[str, Any], manifest.payload["limits"])["total_spend_usd"]),
         "verdict": "complete",
     }
     private = {
-        "manifest_hash": manifest_digest(),
+        "manifest_hash": manifest.digest,
         "paired_task_log_cost_differences": paired,
         "runs": [
             {
@@ -351,24 +343,26 @@ def _complete_analysis(
             }
             for item in metrics
         ],
-        "schema_version": 1,
+        "schema_version": manifest.payload["schema_version"],
         "task_arm_mean_cost_usd": task_means,
     }
     return private, public
 
 
-def analyze_campaign(artifact_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def analyze_campaign(
+    artifact_root: Path, *, manifest: PilotManifest
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return private detail and an allowlisted public disposition."""
-    manifest = validate_manifest_file()
     root = artifact_root.expanduser().absolute()
     state = _read_json_object(root / "campaign-state.json")
+    if state.get("manifest_hash") != manifest.digest:
+        raise AnalysisError("campaign state manifest hash does not match selected manifest")
     expected_ids = [run.run_id for run in manifest.run_order]
     completed = state.get("completed_runs")
     live_before = state.get("live_state_before")
     live_after = state.get("live_state_after")
     state_valid = (
-        state.get("manifest_hash") == manifest_digest()
-        and state.get("status") == "completed"
+        state.get("status") == "completed"
         and isinstance(completed, list)
         and completed == expected_ids
         and isinstance(live_before, dict)
@@ -426,30 +420,30 @@ def analyze_campaign(artifact_root: Path) -> tuple[dict[str, Any], dict[str, Any
         "confirmatory_task_count_at_two_repeats": None,
         "expected_run_count": len(manifest.run_order),
         "gateway_spend_usd": float(gateway_spend),
-        "manifest_hash": manifest_digest(),
+        "manifest_hash": manifest.digest,
         "mechanism_failures": mechanism_failures,
         "native_headroom_correlation": None,
         "native_laconic_correlation": None,
         "paired_log_cost_sd": None,
         "power": float(analysis["power"]),
         "run_count": len(metrics),
-        "schema_version": 1,
+        "schema_version": manifest.payload["schema_version"],
         "total_cap_usd": float(cast(dict[str, Any], manifest.payload["limits"])["total_spend_usd"]),
         "verdict": "incomplete",
     }
     private = {
         "analysis_failure": analysis_failure,
-        "manifest_hash": manifest_digest(),
+        "manifest_hash": manifest.digest,
         "runs": [item.run_id for item in metrics],
-        "schema_version": 1,
+        "schema_version": manifest.payload["schema_version"],
         "verdict": "incomplete",
     }
     return private, public
 
 
-def render_public_markdown(report: dict[str, Any]) -> str:
+def render_public_markdown(report: dict[str, Any], *, manifest: PilotManifest) -> str:
     """Render the allowlisted report without introducing hidden fields."""
-    validate_public_report(report)
+    validate_public_report(report, manifest=manifest)
     if report["verdict"] == "incomplete":
         dispersion = laconic_correlation = headroom_correlation = task_count = "not computed"
     else:
@@ -499,28 +493,42 @@ def _atomic_write(path: Path, content: bytes, *, private: bool) -> None:
 
 
 def generate_report(
-    artifact_root: Path, output_json: Path, output_markdown: Path
+    artifact_root: Path,
+    output_json: Path,
+    output_markdown: Path,
+    *,
+    manifest: PilotManifest,
 ) -> dict[str, Any]:
     """Generate private analysis plus deterministic public JSON and Markdown."""
     root = artifact_root.expanduser().absolute()
-    private, public = analyze_campaign(root)
-    validate_public_report(public)
+    private, public = analyze_campaign(root, manifest=manifest)
+    validate_public_report(public, manifest=manifest)
     _atomic_write(
         root / _PRIVATE_REPORT_NAME,
         canonical_json(private),
         private=True,
     )
     _atomic_write(output_json, canonical_json(public), private=False)
-    _atomic_write(output_markdown, render_public_markdown(public).encode(), private=False)
+    _atomic_write(
+        output_markdown,
+        render_public_markdown(public, manifest=manifest).encode(),
+        private=False,
+    )
     return public
 
 
-def check_report(artifact_root: Path, report_json: Path, report_markdown: Path) -> dict[str, Any]:
+def check_report(
+    artifact_root: Path,
+    report_json: Path,
+    report_markdown: Path,
+    *,
+    manifest: PilotManifest,
+) -> dict[str, Any]:
     """Recompute and require byte-identical public artifacts."""
-    _, public = analyze_campaign(artifact_root)
-    validate_public_report(public)
+    _, public = analyze_campaign(artifact_root, manifest=manifest)
+    validate_public_report(public, manifest=manifest)
     expected_json = canonical_json(public)
-    expected_markdown = render_public_markdown(public).encode()
+    expected_markdown = render_public_markdown(public, manifest=manifest).encode()
     _ordinary_file(report_json)
     _ordinary_file(report_markdown)
     if (

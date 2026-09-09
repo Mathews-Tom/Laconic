@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from tools.controlled_spend.manifest import RunSpec, validate_manifest_file
+from tools.controlled_spend.manifest import (
+    DEFAULT_MANIFEST_PATH,
+    RunSpec,
+    validate_manifest_file,
+)
 from tools.controlled_spend.runner import (
     _cleanup_credential_snapshot,
     build_run_command,
@@ -100,7 +104,7 @@ def test_live_state_digest_hashes_symlink_without_following_target(tmp_path: Pat
 
 
 def test_native_and_laconic_commands_share_the_frozen_omp_surface(tmp_path: Path) -> None:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     worktree = tmp_path / "worktree"
     session_dir = tmp_path / "sessions"
     native = RunSpec("r001", "t01", 1, "native")
@@ -136,7 +140,7 @@ def test_native_and_laconic_commands_share_the_frozen_omp_surface(tmp_path: Path
 
 
 def test_headroom_command_and_environment_are_isolated(tmp_path: Path) -> None:
-    manifest = validate_manifest_file()
+    manifest = validate_manifest_file(DEFAULT_MANIFEST_PATH)
     run = RunSpec("r001", "t01", 1, "headroom")
     run_root = tmp_path / "run"
     run_root.mkdir(mode=0o700)
@@ -195,7 +199,7 @@ def test_native_environment_removes_ambient_experiment_state(
     run = RunSpec("r002", "t01", 1, "native")
 
     env = build_run_environment(
-        validate_manifest_file(),
+        validate_manifest_file(DEFAULT_MANIFEST_PATH),
         run,
         agent_dir=agent_dir,
         run_root=run_root,
