@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - The M20-v2 manifest remains byte-identical with `execution_authorized: false`. That field is a permanent statement that the study contract does not authorize itself, not an operator switch; authorization is external to the manifest so the owner-reviewed digest survives.
 - M20-v1 `pilot run` is permanently closed. M20-v1 `pilot report` and `pilot check` remain fully operational for historical verification, and both v1 public artifacts stay byte-identical.
+- The `live_state_changed` stopping rule is now attributed instead of wholesale. The M20-v2 manifest gains a required `live_state` object declaring the measured roots and an exact ambient-writer path allowlist, and the runner compares a digest computed over everything outside that allowlist. Ambient local agent activity no longer invalidates a campaign, while any other change to either live root still does, and the allowlist can never match the live credential database. This changes the manifest digest and supersedes `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`, which was never executed.
 
 ## [0.10.0] — 2026-09-09
 
