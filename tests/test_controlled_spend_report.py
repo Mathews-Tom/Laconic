@@ -188,6 +188,27 @@ def test_complete_report_is_variance_only_and_reproducible(tmp_path: Path) -> No
     assert "not a performance result" in report_markdown.read_text()
 
 
+def test_incomplete_campaign_preserves_gateway_spend(tmp_path: Path) -> None:
+    artifacts = tmp_path / "private"
+    manifest = _seed_campaign(artifacts)
+    completed = manifest.run_order[:3]
+    receipt_path = artifacts / "gateway-receipts.jsonl"
+    receipt_path.write_bytes(b"".join(receipt_path.read_bytes().splitlines(keepends=True)[:3]))
+    state_path = artifacts / "campaign-state.json"
+    state = json.loads(state_path.read_text())
+    state["completed_runs"] = [run.run_id for run in completed]
+    state["status"] = "incomplete"
+    state.pop("gateway_spent_usd")
+    _write_json(state_path, state)
+
+    report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
+
+    assert report["verdict"] == "incomplete"
+    assert report["run_count"] == 3
+    assert report["gateway_spend_usd"] == pytest.approx(0.03)
+    assert report["completion_failures"] + report["mechanism_failures"] == 21
+
+
 @pytest.mark.parametrize("mutation", ["missing_receipt", "duplicate_receipt"])
 def test_receipt_population_mutations_suppress_statistics(tmp_path: Path, mutation: str) -> None:
     artifacts = tmp_path / "private"
@@ -202,7 +223,14 @@ def test_receipt_population_mutations_suppress_statistics(tmp_path: Path, mutati
     report = generate_report(artifacts, tmp_path / "report.json", tmp_path / "report.md")
 
     assert report["verdict"] == "incomplete"
-    assert report["mechanism_failures"] == len(validate_manifest_file().run_order)
+    if mutation == "missing_receipt":
+        assert report["run_count"] == 23
+        assert report["mechanism_failures"] == 1
+        assert report["gateway_spend_usd"] == pytest.approx(0.23)
+    else:
+        assert report["run_count"] == 0
+        assert report["mechanism_failures"] == len(validate_manifest_file().run_order)
+        assert report["gateway_spend_usd"] == 0.0
     assert report["paired_log_cost_sd"] is None
     assert report["confirmatory_task_count_at_two_repeats"] is None
 
