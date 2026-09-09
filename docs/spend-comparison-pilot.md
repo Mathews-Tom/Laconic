@@ -2,65 +2,71 @@
 
 ## Scope
 
-This runbook operates the one owner-authorized M20 variance pilot. The committed manifest fixes four tasks, two repetitions, three arms, Claude Sonnet 5, OMP 18.1.14, Headroom 0.37.0, a maximum of eight provider requests per run, and a $10 total provider-spend cap.
+This runbook preserves the completed M20-v1 pilot and specifies the unexecuted M20-v2 candidate. M20-v1 remains bound to `tools/controlled_spend/pilot-manifest.json`, its original prompts, a maximum of eight provider requests per run, and manifest hash `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`.
 
-The pilot measures dispersion and cross-arm cost correlation for confirmatory-sample planning. It is not a performance result. Never publish arm means, a paired effect estimate, task-level costs, per-arm token components, a savings claim, or a product-superiority claim.
+Both protocols concern dispersion and cross-arm cost correlation for confirmatory-sample planning. Neither is a performance result. Never publish arm means, a paired effect estimate, task-level costs, per-arm token components, a savings claim, or a product-superiority claim.
 
-A confirmatory run is not authorized. It requires a new committed manifest, a newly frozen sample and cap, and explicit owner authorization.
+M20-v2 is a candidate only. Its separate manifest and private root must remain execution-disabled until the owner authorizes the exact committed hash. A confirmatory run also requires a new committed manifest, newly frozen sample and cap, and explicit owner authorization.
 
 ## Evidence boundaries
 
-Keep the artifact root outside the repository, the live `~/.omp/agent` tree, and the live Laconic runtime-data tree. The runner creates it with mode `0700`. Raw OMP transcripts, Headroom metadata logs, Laconic ledgers, task worktrees, and private arm-cost analysis remain there. Each isolated OMP credential database and every SQLite sidecar are deleted after its run. The campaign credential snapshot is deleted on every exit path.
+Keep every campaign artifact root outside the repository, the live `~/.omp/agent` tree, and the live Laconic runtime-data tree. M20-v1 remains read-only at its preserved private root. M20-v2 requires a different fresh root created with mode `0700`. Raw OMP transcripts, Headroom metadata logs, Laconic ledgers, task worktrees, and private arm-cost analysis remain private. Each isolated OMP credential database and every SQLite sidecar must be deleted after its run, and the campaign credential snapshot must be deleted on every exit path.
 
-Only the generated public JSON and Markdown reports may enter Git. Their exact-key privacy gate permits the frozen manifest hash, disposition, completeness and mechanism-failure counts, paired log-cost standard deviation, two cross-arm correlations, confirmatory task-count feasibility, frozen statistical parameters, and total gateway spend. It rejects every additional key.
+Only generated public JSON and Markdown reports may enter Git. V1 retains its frozen exact-key schema byte-for-byte. V2 uses a separate exact-key schema for its manifest hash, disposition, attempted/valid/unrun and disjoint failure counters, paired log-cost standard deviation, two cross-arm correlations, confirmatory task-count feasibility, frozen statistical parameters, and total gateway spend. Every additional key is rejected.
 
-## Preflight
+## Verify M20-v1 without mutation or provider access
 
-Run from the repository root after the manifest, runner, gateway, analysis, and privacy changes are merged:
-
-The harness executes the exact `@oh-my-pi/pi-coding-agent@18.1.14` package through `bunx`; it does not trust the workstation's current `omp` executable. The Headroom arm receives a private `omp` shim that delegates to the same exact package.
+Never run M20-v1 again. To verify its public disposition, remove provider credentials from the command environment, copy the private root to a temporary owner-only location outside Git, and run report/check against the copy. `generate_report` writes private analysis state, so pointing it at the preserved root would violate the evidence boundary.
 
 ```bash
-uv sync --locked
-uv run python -m tools.controlled_spend manifest check --verify-oracles
-uv run python -m tools.controlled_spend pilot preflight
-laconic-dogfood-check
-```
+VERIFY_PARENT="$(mktemp -d)"
+chmod 700 "$VERIFY_PARENT"
+cp -R "$HOME/.local/share/laconic-controlled-spend/m20-pilot" "$VERIFY_PARENT/m20-pilot"
 
-Record content digests for the live OMP agent tree and Laconic runtime-data tree. The runner records independent before/after tree digests in the private campaign state and fails the campaign if either changes. Do not use OMP concurrently while the pilot runs.
-
-## Execute once
-
-Choose a fresh private path outside Git and outside every live-state root. Never reuse a partial path and never restart or tune a failed cell.
-
-```bash
-PRIVATE_ROOT="$HOME/.local/share/laconic-controlled-spend/m20-pilot"
-uv run python -m tools.controlled_spend pilot run --artifact-root "$PRIVATE_ROOT"
-```
-
-The shared loopback gateway reserves the frozen worst-case request cost before forwarding. It stops before a request that could cross $10, charges the reservation if provider usage is missing or malformed, and stops after eight requests in one cell. Native OMP, Laconic, and Headroom use the same gateway, model, prompt, task tree, tools, thinking level, completion oracle, request limit, and wall-clock limit.
-
-Any incomplete cell terminates the campaign. Preserve the private root for diagnosis. Do not resume, replace, add, drop, or rerun a cell after any paid result.
-
-## Generate and verify the public disposition
-
-```bash
 uv run python -m tools.controlled_spend pilot report \
-  --artifact-root "$PRIVATE_ROOT" \
-  --output-json docs/results/controlled-spend-pilot.json \
-  --output-markdown docs/results/controlled-spend-pilot.md
+  --artifact-root "$VERIFY_PARENT/m20-pilot" \
+  --output-json "$VERIFY_PARENT/controlled-spend-pilot.json" \
+  --output-markdown "$VERIFY_PARENT/controlled-spend-pilot.md"
 
 uv run python -m tools.controlled_spend pilot check \
-  --artifact-root "$PRIVATE_ROOT" \
-  --report-json docs/results/controlled-spend-pilot.json \
-  --report-markdown docs/results/controlled-spend-pilot.md
+  --artifact-root "$VERIFY_PARENT/m20-pilot" \
+  --report-json "$VERIFY_PARENT/controlled-spend-pilot.json" \
+  --report-markdown "$VERIFY_PARENT/controlled-spend-pilot.md"
 
+cmp "$VERIFY_PARENT/controlled-spend-pilot.json" docs/results/controlled-spend-pilot.json
+cmp "$VERIFY_PARENT/controlled-spend-pilot.md" docs/results/controlled-spend-pilot.md
+```
+
+The manifest must resolve to `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`; every statistical field must remain null; stored before/after live-state digests must match; and no `credential-snapshot.db*` artifact may exist.
+
+## M20-v1 is closed
+
+The preserved v1 root is `$HOME/.local/share/laconic-controlled-spend/m20-pilot`. Never resume, replace, add, drop, rewrite, or delete a cell or private artifact there. Never use its three invalid attempted cells in M20-v2. The generated [public disposition](results/controlled-spend-pilot.md) is the canonical v1 result.
+
+All three attempted task oracles passed and all three mechanisms engaged. The three cells were still protocol-invalid because every model changed the literal first command; one also attempted a ninth request after eight successful requests. V1's frozen public schema reports 21 unrun cells as completion failures and 3 attempted invalid cells as mechanism failures. Preserve those bytes as history; use the corrected v2 taxonomy only for v2 evidence.
+
+## M20-v2 candidate preflight
+
+After the full readiness stack is available, every command names the v2 manifest explicitly:
+
+```bash
+V2_MANIFEST="tools/controlled_spend/pilot-manifest-v2.json"
+V2_PRIVATE_ROOT="$HOME/.local/share/laconic-controlled-spend/m20-v2-pilot"
+
+uv sync --locked
+uv run python -m tools.controlled_spend manifest check \
+  --manifest "$V2_MANIFEST" \
+  --verify-oracles
+uv run python -m tools.controlled_spend pilot preflight \
+  --manifest "$V2_MANIFEST"
 laconic-dogfood-check
 ```
 
-A complete disposition requires all 24 frozen run IDs in exact order, a valid completion result for every cell, one strict OMP usage transcript per cell, provider-request counts matching priced assistant turns, the frozen provider and model, `python3 diagnose.py` as the first tool action, unchanged fixture guards, and mechanism evidence for every arm. Native must have no Laconic or Headroom artifact. Laconic must record at least one eligible and one emitted runtime decision. Headroom must log every request without message content and show either a transformation or explicit numeric pass-through.
+The runner executes `python3 diagnose.py` against each materialized task before OMP starts and requires the frozen failing baseline. This deterministic check is outside provider usage and task-cost accounting. V2 prompts do not require an exact first tool command; later tool choice is measured behavior.
 
-An incomplete disposition publishes only counts, spend, and the frozen parameters. Dispersion, correlations, and confirmatory task count remain null.
+The shared loopback gateway reserves each request's conservative maximum before forwarding. It accepts at most 16 requests per cell, refuses the 17th, retains the 180-second wall limit, charges the reservation if usage is missing or malformed, and never permits cumulative spent plus outstanding reservations to exceed $10.
+
+Preflight and report/check are no-provider operations. `pilot run` must fail while the manifest's execution authorization is false. Do not probe credentials or attempt execution in the readiness session.
 
 ## Recorded disposition
 
@@ -68,10 +74,34 @@ The authorized campaign ran once and stopped under the frozen invalid-cell rule.
 
 Do not restart, tune, or salvage this pilot. It supplies no sample-feasibility result and does not authorize a confirmatory run.
 
+## M20-v2 candidate execution boundary
+
+Provider execution requires a fresh owner instruction naming or unambiguously accepting the exact committed v2 manifest hash and maximum reserved-spend calculation. Use only a fresh private root distinct from M20-v1. Never reuse a partial v2 root after any paid result.
+
+```bash
+uv run python -m tools.controlled_spend pilot run \
+  --manifest "$V2_MANIFEST" \
+  --artifact-root "$V2_PRIVATE_ROOT"
+
+uv run python -m tools.controlled_spend pilot report \
+  --manifest "$V2_MANIFEST" \
+  --artifact-root "$V2_PRIVATE_ROOT" \
+  --output-json docs/results/controlled-spend-pilot-v2.json \
+  --output-markdown docs/results/controlled-spend-pilot-v2.md
+
+uv run python -m tools.controlled_spend pilot check \
+  --manifest "$V2_MANIFEST" \
+  --artifact-root "$V2_PRIVATE_ROOT" \
+  --report-json docs/results/controlled-spend-pilot-v2.json \
+  --report-markdown docs/results/controlled-spend-pilot-v2.md
+```
+
+These commands are a future operator surface, not authorization. Any incomplete cell terminates the candidate campaign. Preserve its separate private root for diagnosis and publish only the exact allowlisted disposition.
+
 ## Interpretation
 
-For a complete pilot, the private analysis computes each task/arm mean over the two repetitions and the paired task log-cost difference `log(mean_laconic) - log(mean_native)`. The public report exposes only the sample standard deviation of those four paired differences. It also reports native/Laconic and native/Headroom cost correlations across the four task means.
+For a complete M20-v2 pilot, private analysis computes each task/arm mean over the two repetitions and the paired task log-cost difference `log(mean_laconic) - log(mean_native)`. The public report exposes only the sample standard deviation of those four paired differences and the native/Laconic and native/Headroom cost correlations across four task means.
 
-The preliminary confirmatory task count uses a two-sided normal approximation with alpha 0.05, power 0.80, the precommitted 10% worthwhile reduction, and two repetitions per task. It rounds up and applies a two-task minimum because paired-difference dispersion is not estimable from one task. Changing the repetition count invalidates that calculation and requires a new variance model.
+The preliminary confirmatory task count uses a two-sided normal approximation with alpha 0.05, power 0.80, the precommitted 10% worthwhile reduction, and two repetitions per task. It remains null unless all 24 cells are valid. Changing the repetition count requires a new variance model.
 
-Do not infer direction, magnitude, savings, equivalence, or superiority from the variance pilot. Judge only whether the resulting confirmatory sample is operationally feasible. Stop if it is infeasible. If it is feasible, freeze a new confirmatory protocol and obtain explicit spend authorization before any new provider call.
+Do not infer direction, magnitude, savings, equivalence, or superiority from either variance pilot. If a complete v2 result makes a confirmatory sample operationally feasible, freeze a new confirmatory protocol and obtain explicit spend authorization before any new provider call.
