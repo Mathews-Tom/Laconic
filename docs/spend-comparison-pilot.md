@@ -166,11 +166,68 @@ The control still fails closed. Any differing path outside the declared allowlis
 
 ### Attributed quiescence is a pre-spend gate
 
-Before committing spend, sample the attributed digest of both roots across a window at least as long as the campaign's expected duration, under the same monitoring you intend to use, and require it to be identical. If it moves, some non-ambient path is changing and the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell.
+Before committing spend, sample the attributed digest of both roots across a window at least as long as the campaign's expected duration, under the same monitoring you intend to use, and require it to be identical. `pilot quiesce` does exactly that and is the supported gate:
+
+```bash
+uv run python -m tools.controlled_spend pilot quiesce \
+  --manifest "$V2_MANIFEST" \
+  --seconds 7200 \
+  --interval 300
+```
+
+It exits zero only when every sample over the whole window is identical. On any movement it exits non-zero and names the root and the differing non-ambient paths, so the writer can be identified rather than guessed. Its output is local operator diagnostics and is never written into a public artifact.
+
+If it moves, some non-ambient path is changing and the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell.
 
 The residual is explicit: any file under the declared allowlist may be written in the live roots without tripping the rule. Under normal operation the agent under test is confined to the private run root by `PI_CODING_AGENT_DIR`, `--session-dir`, and its own Laconic data directory, so campaign output cannot reach those live paths. Because that agent runs with `bash` and `write` under auto-approve, a rogue or buggy command could still touch exactly those allowlisted live paths undetected. The live credential database is not one of them.
 
 Do not widen `ambient_paths` to make a failing measurement pass. Diagnose the differing path first: an unanticipated ambient writer is a manifest amendment that needs owner approval and produces a new digest, while a campaign-caused write is the exact defect the rule exists to catch.
+
+### The live agent database is the last writer
+
+Measurement on the reference machine found exactly one remaining non-ambient writer: `omp_agent/agent.db`. A live OMP session folds its write-ahead log into that file every few minutes. The file is the credential database, it is the single most important artifact the rule protects, and `compile_ambient_paths` refuses any pattern that matches it.
+
+The practical consequence is narrow but absolute: **the campaign cannot be supervised from a live OMP session**, because that session is the writer. Observe hooks, runtime ledgers, memory banks, managed skills, session transcripts, and derived caches may all keep running.
+
+### Unattended execution
+
+Run the whole sequence from a plain shell with no coding-agent session open.
+
+1. Close every OMP session on the machine. Confirm nothing is holding the agent database:
+
+   ```bash
+   pgrep -fl 'pi-coding-agent|omp' || echo "no agent process"
+   ```
+
+2. Prove quiescence for at least the campaign's expected duration. Do not shorten this window to save time; a shorter window is not evidence.
+
+   ```bash
+   uv run python -m tools.controlled_spend pilot quiesce \
+     --manifest "$V2_MANIFEST" --seconds 7200 --interval 300
+   ```
+
+3. Create the single-use authorization receipt outside Git, bound to the exact manifest digest and the canonical private root, as `0600` under a `0700` directory. Never print its body.
+
+4. Launch the campaign detached so no terminal or agent session owns it, and keep only content-free progress:
+
+   ```bash
+   nohup uv run python -m tools.controlled_spend pilot run \
+     --manifest "$V2_MANIFEST" \
+     --authorization "$V2_AUTHORIZATION" \
+     --artifact-root "$V2_PRIVATE_ROOT" \
+     > "$HOME/m20-v2-run.log" 2>&1 &
+   ```
+
+5. Monitor without opening an agent session. The campaign's own private state carries the progress; reading it does not write to either live root:
+
+   ```bash
+   python3 -c "import json,sys;s=json.load(open(sys.argv[1]));print(s['status'], len(s['completed_runs']), s.get('gateway_halted_reason'))" \
+     "$V2_PRIVATE_ROOT/campaign-state.json"
+   ```
+
+6. Only after the process exits, reopen an agent session if you want one, then generate and check the public artifacts.
+
+There is still no retry. If the run stops under a frozen condition, record the terminal state and publish the allowlisted incomplete disposition; do not start a second campaign.
 
 ## Interpretation
 
