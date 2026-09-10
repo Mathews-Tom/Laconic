@@ -10,7 +10,12 @@ import pytest
 
 import tools.controlled_spend.__main__ as cli_module
 from laconic.runtime.storage import RuntimeStorage
-from tools.controlled_spend.analysis import AnalysisError, check_report, generate_report
+from tools.controlled_spend.analysis import (
+    AnalysisError,
+    check_report,
+    generate_report,
+    render_public_markdown,
+)
 from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_V2_MANIFEST_PATH,
@@ -754,3 +759,33 @@ def test_public_v2_artifacts_never_carry_execution_authorization(tmp_path: Path)
         assert "e5" * 32 not in text
         assert "authorization_id" not in text
         assert "authorization_sha256" not in text
+
+
+@pytest.mark.parametrize(
+    ("manifest_path", "report_json", "report_markdown"),
+    [
+        (
+            DEFAULT_MANIFEST_PATH,
+            Path("docs/results/controlled-spend-pilot.json"),
+            Path("docs/results/controlled-spend-pilot.md"),
+        ),
+        (
+            DEFAULT_V2_MANIFEST_PATH,
+            Path("docs/results/controlled-spend-pilot-v2.json"),
+            Path("docs/results/controlled-spend-pilot-v2.md"),
+        ),
+    ],
+)
+def test_committed_public_artifacts_satisfy_the_privacy_gate(
+    manifest_path: Path, report_json: Path, report_markdown: Path
+) -> None:
+    manifest = validate_manifest_file(manifest_path)
+    payload = json.loads(report_json.read_text(encoding="utf-8"))
+
+    validate_public_report(payload, manifest=manifest)
+
+    assert payload["manifest_hash"] == manifest.digest
+    assert report_json.read_bytes() == canonical_json(payload)
+    assert (
+        report_markdown.read_bytes() == render_public_markdown(payload, manifest=manifest).encode()
+    )
