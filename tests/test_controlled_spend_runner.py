@@ -13,6 +13,7 @@ from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
     DEFAULT_V2_MANIFEST_PATH,
     RunSpec,
+    ambient_paths,
     materialize_task,
     validate_manifest_file,
 )
@@ -24,6 +25,7 @@ from tools.controlled_spend.runner import (
     build_run_command,
     build_run_environment,
     cleanup_agent_directory,
+    live_state_snapshot,
     snapshot_agent_database,
     tree_state_digest,
 )
@@ -257,3 +259,87 @@ def test_v2_failed_diagnosis_stops_before_credential_or_omp_setup(
         )
 
     assert not (campaign_root / "runs" / run.run_id / "agent").exists()
+
+
+def test_attributed_digest_ignores_declared_ambient_paths(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    ambient = ambient_paths(manifest)
+    root = tmp_path / "omp_agent"
+    (root / "sessions" / "proj").mkdir(parents=True)
+    (root / "cache" / "composer").mkdir(parents=True)
+    (root / "agent.db").write_bytes(b"credentials")
+    (root / "agent.db-wal").write_bytes(b"before")
+    (root / "sessions" / "proj" / "a.jsonl").write_bytes(b"before")
+    before = live_state_snapshot(root, prefix="omp_agent", ambient=ambient)
+
+    (root / "agent.db-wal").write_bytes(b"after-and-longer")
+    (root / "sessions" / "proj" / "a.jsonl").write_bytes(b"after")
+    (root / "cache" / "composer" / "status.json").write_bytes(b"new")
+    after = live_state_snapshot(root, prefix="omp_agent", ambient=ambient)
+
+    changed = {path for path, _ in set(before.ambient.items()) ^ set(after.ambient.items())}
+    assert after.digest == before.digest
+    assert changed == {
+        "omp_agent/agent.db-wal",
+        "omp_agent/sessions/proj/a.jsonl",
+        "omp_agent/cache/composer/status.json",
+    }
+
+
+def test_a_campaign_write_to_agent_configuration_is_detected(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    ambient = ambient_paths(manifest)
+    root = tmp_path / "omp_agent"
+    (root / "extensions").mkdir(parents=True)
+    before = live_state_snapshot(root, prefix="omp_agent", ambient=ambient)
+
+    (root / "extensions" / "laconic.ts").write_bytes(b"campaign output")
+
+    assert live_state_snapshot(root, prefix="omp_agent", ambient=ambient).digest != before.digest
+
+
+def test_attributed_digest_still_detects_a_credential_database_write(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    ambient = ambient_paths(manifest)
+    root = tmp_path / "omp_agent"
+    root.mkdir()
+    (root / "agent.db").write_bytes(b"credentials")
+    before = live_state_snapshot(root, prefix="omp_agent", ambient=ambient)
+
+    (root / "agent.db").write_bytes(b"tampered")
+
+    assert live_state_snapshot(root, prefix="omp_agent", ambient=ambient).digest != before.digest
+
+
+def test_attributed_digest_detects_any_undeclared_path(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    ambient = ambient_paths(manifest)
+    root = tmp_path / "laconic_runtime"
+    (root / "observe").mkdir(parents=True)
+    (root / "observe" / "audit.jsonl").write_bytes(b"receipt")
+    before = live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient)
+
+    (root / "observe" / "audit.jsonl").write_bytes(b"receipt-two")
+    assert (
+        live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient).digest == before.digest
+    )
+
+    (root / "ledger.sqlite3").write_bytes(b"runtime")
+    assert (
+        live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient).digest != before.digest
+    )
+
+
+def test_ambient_attribution_requires_the_root_prefix(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    ambient = ambient_paths(manifest)
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "agent.db-wal").write_bytes(b"before")
+    before = live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient)
+
+    (root / "agent.db-wal").write_bytes(b"after")
+
+    assert (
+        live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient).digest != before.digest
+    )

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,20 @@ STOPPING_RULES: Final = (
     "private_artifact_cleanup_failed",
 )
 V2_STOPPING_RULES: Final = ("runner_diagnosis_failed", *STOPPING_RULES)
+V2_LIVE_STATE_ROOTS: Final = ("laconic_runtime", "omp_agent")
+V2_AMBIENT_PATHS: Final = (
+    "laconic_runtime/observe/audit.jsonl",
+    "laconic_runtime/sessions/*.sqlite3",
+    "laconic_runtime/sessions/*.sqlite3-shm",
+    "laconic_runtime/sessions/*.sqlite3-wal",
+    "omp_agent/agent.db-shm",
+    "omp_agent/agent.db-wal",
+    "omp_agent/cache/**",
+    "omp_agent/managed-skills/**",
+    "omp_agent/memories/**",
+    "omp_agent/sessions/**",
+)
+CREDENTIAL_STATE_PATH: Final = "omp_agent/agent.db"
 PUBLIC_REPORT_KEYS: Final = (
     "schema_version",
     "manifest_hash",
@@ -174,6 +189,41 @@ def _require_decimal(value: Any, field: str) -> Decimal:
 def canonical_json(payload: Any) -> bytes:
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return f"{serialized}\n".encode()
+
+
+def _glob_to_regex(pattern: str) -> str:
+    parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "*":
+            if pattern[index + 1 : index + 2] == "*":
+                parts.append(".*")
+                index += 2
+                continue
+            parts.append("[^/]*")
+        elif character == "?":
+            parts.append("[^/]")
+        else:
+            parts.append(re.escape(character))
+        index += 1
+    return "".join(parts)
+
+
+def compile_ambient_paths(patterns: tuple[str, ...]) -> re.Pattern[str]:
+    """Compile the frozen ambient-writer allowlist into one anchored matcher."""
+    if not patterns:
+        raise ManifestError("ambient path allowlist must not be empty")
+    compiled = re.compile("|".join(f"(?:{_glob_to_regex(item)})" for item in patterns))
+    if compiled.fullmatch(CREDENTIAL_STATE_PATH):
+        raise ManifestError("ambient path allowlist must never match the credential database")
+    return compiled
+
+
+def ambient_paths(manifest: PilotManifest) -> re.Pattern[str]:
+    """Return the compiled allowlist for the selected manifest."""
+    live_state = cast(dict[str, Any], manifest.payload["live_state"])
+    return compile_ambient_paths(tuple(cast(list[str], live_state["ambient_paths"])))
 
 
 def sha256_file(path: Path) -> str:
@@ -346,7 +396,7 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
     is_v2 = schema_version == V2_SCHEMA_VERSION
     _require_exact_keys(
         payload,
-        common_keys | ({"execution_authorized"} if is_v2 else set()),
+        common_keys | ({"execution_authorized", "live_state"} if is_v2 else set()),
         "manifest",
     )
     if payload["phase"] != "variance_pilot":
@@ -361,6 +411,14 @@ def validate_manifest_json(payload: dict[str, Any]) -> PilotManifest:
         raise ManifestError("study_id differs from the selected frozen pilot")
     if is_v2 and payload["execution_authorized"] is not False:
         raise ManifestError("M20-v2 execution_authorized must remain false")
+    if is_v2:
+        live_state = _require_object(payload["live_state"], "live_state")
+        _require_exact_keys(live_state, {"roots", "ambient_paths"}, "live_state")
+        if live_state["roots"] != list(V2_LIVE_STATE_ROOTS):
+            raise ManifestError("live_state.roots differ from the frozen pilot")
+        if live_state["ambient_paths"] != list(V2_AMBIENT_PATHS):
+            raise ManifestError("live_state.ambient_paths differ from the frozen pilot")
+        compile_ambient_paths(tuple(V2_AMBIENT_PATHS))
     if payload["arms"] != list(ARMS) or payload["repeats"] != REPEATS:
         raise ManifestError("arms/repeats differ from the frozen pilot")
     if _require_hex64(payload["random_seed"], "random_seed") != random_seed:

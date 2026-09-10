@@ -321,7 +321,6 @@ def test_mismatched_authorization_stops_before_preflight_and_root_creation(
         raise AssertionError("environment preflight must not run")
 
     monkeypatch.setattr(runner_module, "preflight_environment", forbidden_preflight)
-    monkeypatch.setattr(runner_module, "tree_state_digest", lambda _: "0" * 64)
 
     with pytest.raises(PilotAuthorizationError, match="different artifact root"):
         run_campaign(
@@ -345,7 +344,6 @@ def test_authorized_campaign_records_the_receipt_then_consumes_it(
     agent_directory = tmp_path / "agent"
     agent_directory.mkdir()
     monkeypatch.setattr(runner_module, "resolve_data_dir", lambda: live_root)
-    monkeypatch.setattr(runner_module, "tree_state_digest", lambda _: "0" * 64)
     monkeypatch.setattr(runner_module, "preflight_environment", lambda _: None)
 
     def fake_snapshot(source: Path, destination: Path) -> str:
