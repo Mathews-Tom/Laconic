@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from tools.controlled_spend.analysis import check_report, generate_report
-from tools.controlled_spend.authorization import load_execution_authorization
+from tools.controlled_spend.authorization import (
+    create_execution_authorization,
+    load_execution_authorization,
+)
 from tools.controlled_spend.manifest import (
     validate_manifest_file,
     verify_completion_oracles,
@@ -40,6 +43,13 @@ def _parser() -> argparse.ArgumentParser:
     _add_manifest_argument(quiesce)
     quiesce.add_argument("--seconds", type=int, required=True)
     quiesce.add_argument("--interval", type=int, default=300)
+    authorize = pilot_commands.add_parser(
+        "authorize", help="mint one single-use execution-authorization receipt"
+    )
+    _add_manifest_argument(authorize)
+    authorize.add_argument("--artifact-root", type=Path, required=True)
+    authorize.add_argument("--confirm-digest", required=True)
+    authorize.add_argument("--output", type=Path, required=True)
     run = pilot_commands.add_parser("run", help="execute every selected frozen cell once")
     _add_manifest_argument(run)
     run.add_argument("--authorization", type=Path, required=True)
@@ -103,6 +113,20 @@ def main() -> int:
             print(f"quiescent=false seconds={args.seconds}")
             return 1
         print(f"quiescent=true roots={len(live_state_roots())} seconds={args.seconds}")
+        return 0
+    if args.command == "pilot" and args.pilot_command == "authorize":
+        manifest = validate_manifest_file(args.manifest)
+        authorization = create_execution_authorization(
+            args.output,
+            manifest=manifest,
+            artifact_root=args.artifact_root,
+            confirmed_digest=args.confirm_digest,
+            excluded_roots=tuple(live_state_roots().values()),
+        )
+        print(
+            f"authorization={authorization.authorization_id} "
+            f"receipt={authorization.receipt_sha256} path={authorization.receipt_path}"
+        )
         return 0
     if args.command == "pilot" and args.pilot_command == "run":
         manifest = validate_manifest_file(args.manifest)

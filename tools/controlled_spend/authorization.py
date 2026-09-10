@@ -17,9 +17,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Final, cast
@@ -253,3 +255,70 @@ def consume_execution_authorization(authorization: ExecutionAuthorization) -> No
     authorization.receipt_path.unlink()
     if authorization.receipt_path.exists() or authorization.receipt_path.is_symlink():
         raise PilotAuthorizationError("authorization receipt could not be consumed")
+
+
+def create_execution_authorization(
+    output_path: Path,
+    *,
+    manifest: PilotManifest,
+    artifact_root: Path,
+    confirmed_digest: str,
+    excluded_roots: tuple[Path, ...] = (),
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> ExecutionAuthorization:
+    """Mint one single-use receipt, refusing every unsafe binding or location."""
+    if manifest.payload["schema_version"] != V2_SCHEMA_VERSION:
+        raise PilotAuthorizationError("only the M20-v2 pilot may be executed")
+    if confirmed_digest != manifest.digest:
+        raise PilotAuthorizationError(
+            "confirmed digest does not match the selected manifest; refusing to authorize"
+        )
+    receipt = output_path.expanduser().absolute()
+    root = artifact_root.expanduser().absolute()
+    if root.exists() or root.is_symlink():
+        raise PilotAuthorizationError(
+            "authorized artifact root already exists; a campaign is never resumed"
+        )
+    if receipt.exists() or receipt.is_symlink():
+        raise PilotAuthorizationError("authorization receipt path already exists")
+    contained = _containment_path(receipt.parent)
+    for excluded in (REPOSITORY_ROOT, root, *excluded_roots):
+        resolved = _containment_path(excluded.expanduser().absolute())
+        if contained == resolved or contained.is_relative_to(resolved):
+            raise PilotAuthorizationError(
+                "authorization receipt must live outside the repository, the artifact root, "
+                "and every live-state root"
+            )
+    if not receipt.parent.exists():
+        receipt.parent.mkdir(parents=True, mode=0o700)
+        os.chmod(receipt.parent, 0o700)
+    _validate_private_directory(receipt.parent)
+
+    document: dict[str, Any] = {
+        "artifact_root": str(root),
+        "authorization_id": secrets.token_hex(32),
+        "authorized_at": now().isoformat().replace("+00:00", "Z"),
+        "execution_authorized": True,
+        "manifest_sha256": manifest.digest,
+        "schema_version": AUTHORIZATION_SCHEMA_VERSION,
+        "single_use": True,
+        "study_id": V2_STUDY_ID,
+        "total_spend_usd": format(_campaign_cap(manifest), "f"),
+    }
+    payload = canonical_json(document)
+    descriptor = os.open(receipt, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        return load_execution_authorization(
+            receipt,
+            manifest=manifest,
+            artifact_root=root,
+            excluded_roots=excluded_roots,
+        )
+    except BaseException:
+        receipt.unlink(missing_ok=True)
+        raise
