@@ -165,7 +165,7 @@ def test_v2_manifest_is_distinct_and_fail_closed() -> None:
     v2 = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
 
     assert v1.digest == "a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44"
-    assert v2.digest == "324f8901b73f73dd5e1285c8b374c9e3bcdfcba33a97148a1eb4abbfe109a288"
+    assert v2.digest == "0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28"
     assert set(v2.payload) - set(v1.payload) == {"execution_authorized", "live_state"}
     assert v2.payload["execution_authorized"] is False
     assert v2.payload["limits"]["provider_requests_per_run"] == 16
@@ -187,6 +187,9 @@ def test_v2_ambient_allowlist_is_frozen_and_excludes_the_credential_database() -
     assert manifest.payload["live_state"]["roots"] == ["laconic_runtime", "omp_agent"]
     assert matcher.fullmatch("omp_agent/agent.db") is None
     assert matcher.fullmatch("omp_agent/agent.db-wal") is not None
+    assert matcher.fullmatch("omp_agent/history.db-shm") is not None
+    assert matcher.fullmatch("omp_agent/history.db") is None
+    assert matcher.fullmatch("omp_agent/nested/other.db-wal") is None
     assert matcher.fullmatch("omp_agent/sessions/proj/2026.jsonl") is not None
     assert matcher.fullmatch("omp_agent/cache/composer/abc/status.json") is not None
     assert matcher.fullmatch("omp_agent/memories/mnemopi/banks/x/mnemopi.db-wal") is not None

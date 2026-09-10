@@ -69,7 +69,7 @@ The runner executes `python3 diagnose.py` against each materialized task before 
 
 The shared loopback gateway reserves each request's conservative maximum before forwarding. It accepts at most 16 requests per cell, refuses the 17th, retains the 180-second wall limit, charges the reservation if usage is missing or malformed, and never permits cumulative spent plus outstanding reservations to exceed $10.
 
-The committed candidate manifest hash is `324f8901b73f73dd5e1285c8b374c9e3bcdfcba33a97148a1eb4abbfe109a288`; its `execution_authorized` field remains `false`. That digest supersedes `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`, which carried the wholesale live-state control, was never executed, and produced no observation. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
+The committed candidate manifest hash is `0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28`; its `execution_authorized` field remains `false`. That digest supersedes `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`, which carried the wholesale live-state control, was never executed, and produced no observation. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
 
 Preflight, report, and check are no-provider operations and need no authorization receipt. `pilot run` fails closed for M20-v2 unless the operator names a valid external execution-authorization receipt, and fails closed for M20-v1 unconditionally.
 
@@ -150,8 +150,8 @@ The rule is now attributed. The manifest declares the ambient-writer paths in a 
     "laconic_runtime/sessions/*.sqlite3",
     "laconic_runtime/sessions/*.sqlite3-shm",
     "laconic_runtime/sessions/*.sqlite3-wal",
-    "omp_agent/agent.db-shm",
-    "omp_agent/agent.db-wal",
+    "omp_agent/*.db-shm",
+    "omp_agent/*.db-wal",
     "omp_agent/cache/**",
     "omp_agent/managed-skills/**",
     "omp_agent/memories/**",
