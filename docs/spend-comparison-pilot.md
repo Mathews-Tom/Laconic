@@ -2,11 +2,11 @@
 
 ## Scope
 
-This runbook preserves the completed M20-v1 pilot and specifies the unexecuted M20-v2 candidate. M20-v1 remains bound to `tools/controlled_spend/pilot-manifest.json`, its original prompts, a maximum of eight provider requests per run, and manifest hash `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`.
+This runbook preserves the completed M20-v1 pilot and records the executed M20-v2 pilot. M20-v2 ran once under manifest `0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28` and completed: 24 of 24 cells valid, zero task-completion, protocol, or mechanism-non-engagement failures, $0.9975374 pooled gateway spend against the $10.00 cap, a paired log-cost standard deviation of 0.1412, native/Laconic and native/Headroom cost correlations of 0.7062 and 0.9819, and a confirmatory requirement of 15 tasks at two repetitions. Its generated [public disposition](results/controlled-spend-pilot-v2.md) is canonical. A complete variance pilot establishes dispersion and feasibility only. It does not establish savings, equivalence, direction, or superiority, and the arm means and paired effect remain private. M20-v2 may not be rerun; a confirmatory study needs a new frozen manifest and a separate spend authorization. M20-v1 remains bound to `tools/controlled_spend/pilot-manifest.json`, its original prompts, a maximum of eight provider requests per run, and manifest hash `a76c6cb0d2f34737ccd629398b0b2122a3c0a74c63a77055f8112cea602f7b44`.
 
 Both protocols concern dispersion and cross-arm cost correlation for confirmatory-sample planning. Neither is a performance result. Never publish arm means, a paired effect estimate, task-level costs, per-arm token components, a savings claim, or a product-superiority claim.
 
-M20-v2 is a candidate only. Its separate manifest and private root must remain execution-disabled until the owner authorizes the exact committed hash. A confirmatory run also requires a new committed manifest, newly frozen sample and cap, and explicit owner authorization.
+M20-v2 has been executed. Its single authorization was consumed, its private root is closed, and it may not be rerun. A confirmatory run requires a new committed manifest, newly frozen sample and cap, and explicit owner authorization; none exists.
 
 ## Evidence boundaries
 
