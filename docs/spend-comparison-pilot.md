@@ -206,7 +206,19 @@ Run the whole sequence from a plain shell with no coding-agent session open.
      --manifest "$V2_MANIFEST" --seconds 7200 --interval 300
    ```
 
-3. Create the single-use authorization receipt outside Git, bound to the exact manifest digest and the canonical private root, as `0600` under a `0700` directory. Never print its body.
+3. Mint the single-use authorization receipt. `pilot authorize` is the supported way to do it; hand-writing the JSON is error-prone and a wrong mode, digest, or root only surfaces later as a refusal.
+
+   ```bash
+   uv run python -m tools.controlled_spend pilot authorize \
+     --manifest "$V2_MANIFEST" \
+     --artifact-root "$V2_PRIVATE_ROOT" \
+     --confirm-digest 0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28 \
+     --output "$V2_AUTHORIZATION"
+   ```
+
+   `--confirm-digest` is the authorization act. The operator must type the exact digest of the manifest they intend to fund, and the command refuses if it differs from the manifest it was handed, so a stale digest from an older revision cannot silently authorize the current one. It also refuses when the artifact root already exists, when the output file already exists, and when the output path is inside the repository, either live-state root, or the artifact root. It creates the parent directory `0700` if needed and writes the receipt `0600`.
+
+   It prints only the opaque authorization identifier, the receipt digest, and the path. It never prints the receipt body, and the receipt itself is consumed by `pilot run`.
 
 4. Launch the campaign detached so no terminal or agent session owns it, and keep only content-free progress:
 

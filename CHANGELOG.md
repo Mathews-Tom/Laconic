@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Added `pilot authorize`, which mints the single-use controlled-spend execution receipt with the correct binding and permissions. It requires the operator to retype the exact manifest digest being funded and refuses a mismatch, an existing artifact root, an existing output file, or an unsafe output location. It prints the opaque identifier, receipt digest, and path, never the body.
 - Added `pilot quiesce`, a no-provider command that samples the attributed live-state digest of both roots over a requested window and exits non-zero if anything outside the declared ambient allowlist moves, naming the root and the differing paths. It is the supported pre-spend gate for a controlled-spend campaign.
 - Controlled-spend `pilot run` now requires an explicit external execution-authorization receipt for M20-v2. The receipt is a private, single-use, exact-key JSON capability bound to the committed manifest digest, the study identifier, one canonical private artifact root, and the unchanged `$10.00` campaign cap. It is validated before credential access, environment preflight, artifact-root creation, and any provider request, and it is consumed so it cannot authorize a second campaign.
 
