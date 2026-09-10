@@ -69,7 +69,7 @@ The runner executes `python3 diagnose.py` against each materialized task before 
 
 The shared loopback gateway reserves each request's conservative maximum before forwarding. It accepts at most 16 requests per cell, refuses the 17th, retains the 180-second wall limit, charges the reservation if usage is missing or malformed, and never permits cumulative spent plus outstanding reservations to exceed $10.
 
-The committed candidate manifest hash is `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`; its `execution_authorized` field remains `false`. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
+The committed candidate manifest carries `execution_authorized: false`. Its digest is stated in the changelog entry that introduces each revision; the attributed live-state amendment supersedes digest `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`, which carried the wholesale live-state control, was never executed, and produced no observation. The conservative request-size reservation is at most `(16,777,216 input bytes × $4.00/M) + (4,096 output tokens × $10.00/M) = $67.149824` before the campaign cap. Across 24 cells × 16 requests, that uncapped envelope is `$25,785.532416`. The shared gateway instead enforces `spent + outstanding reservations ≤ $10.00`, so the proposed paid campaign cap and maximum campaign commitment are both `$10.00`; any request whose reservation would cross that bound is refused before forwarding.
 
 Preflight, report, and check are no-provider operations and need no authorization receipt. `pilot run` fails closed for M20-v2 unless the operator names a valid external execution-authorization receipt, and fails closed for M20-v1 unconditionally.
 
@@ -81,7 +81,7 @@ Do not restart, tune, or salvage this pilot. It supplies no sample-feasibility r
 
 ## M20-v2 external execution authorization
 
-The manifest's `execution_authorized` field stays `false` forever. It is not a switch. Setting it to `true` would change the manifest bytes and therefore the committed hash `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f` that the owner reviewed, and `manifest check`, `pilot preflight`, `pilot report`, and `pilot check` all reject a v2 manifest whose value is not exactly `false`. The field records that the study contract does not authorize itself.
+The manifest's `execution_authorized` field stays `false` forever. It is not a switch. Setting it to `true` would change the manifest bytes and therefore the committed digest the owner reviewed, and `manifest check`, `pilot preflight`, `pilot report`, and `pilot check` all reject a v2 manifest whose value is not exactly `false`. The field records that the study contract does not authorize itself.
 
 Authorization is therefore external to the study. It is an operator capability carried by a private, single-use receipt file that lives outside Git and outside both live-state roots. A receipt cannot override any manifest field, cannot raise the cap, and cannot select a different population, model, task, profile, or limit.
 
@@ -134,13 +134,43 @@ The maximum campaign commitment is `$10.00`. The gateway refuses any request who
 
 There is no retry. Once `pilot run` starts or creates its bound root, it is not run again for that authorization, even if zero provider requests were forwarded. Record the terminal state, preserve the private root for diagnosis, and publish only the exact allowlisted disposition the frozen logic produces. Never soften, repair, resume, or salvage an incomplete campaign.
 
-### Live-state quiescence is a pre-spend gate
+### The live-state control is attributed, not wholesale
 
-The campaign hashes both live-state roots before it starts and again when it finishes, and the frozen `live_state_changed` stopping rule invalidates the whole campaign when the two digests differ. Those roots are the Laconic runtime data directory and the OMP agent directory, and both are shared with whatever agents are running on the machine at the time.
+The campaign must leave live state undisturbed, and `live_state_changed` is the frozen stopping rule that enforces it. The rule originally hashed two whole shared roots — the Laconic runtime data directory and the OMP agent directory — before and after the campaign and failed when the digests differed.
 
-Ordinary local activity mutates them within seconds: the Observe audit log and per-session runtime ledgers under the Laconic data directory, and the agent database write-ahead log, per-session transcripts, and composer status caches under the OMP agent directory. A supervising agent session is itself such a writer, so a campaign supervised from a live coding-agent session cannot satisfy the rule.
+That measurement could not distinguish campaign-caused change from ambient change. Both roots are shared with whatever agents are running on the machine: the Observe audit log and per-session runtime ledgers under the Laconic data directory, and the agent database write-ahead log, per-session transcripts, derived caches, long-term memory banks, and managed-skill files under the OMP agent directory. Measured on the reference machine, thirteen whole-root digest samples across roughly fifty minutes were pairwise distinct, and a 198-second window — shorter than one cell's wall limit — already differed. A supervising agent session is itself one of those writers. Separately, the campaign's own read-only SQLite backup of the live agent database can materialize an `agent.db-shm` sidecar, so the wholesale rule was arguably unsatisfiable even on an idle machine.
 
-Verify quiescence before committing spend by sampling both roots with the runner's own `tree_state_digest` across a window at least as long as the campaign's expected duration, under the same monitoring you intend to use. If the digests move, the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell. Do not start the campaign, and do not narrow or relax the rule to make it pass: the roots it covers are part of the frozen contract.
+The rule is now attributed. The manifest declares the ambient-writer paths in a required `live_state` object, so the exclusion set is hashed into the manifest digest, reviewable, and cannot drift silently in code:
+
+```json
+"live_state": {
+  "roots": ["laconic_runtime", "omp_agent"],
+  "ambient_paths": [
+    "laconic_runtime/observe/audit.jsonl",
+    "laconic_runtime/sessions/*.sqlite3",
+    "laconic_runtime/sessions/*.sqlite3-shm",
+    "laconic_runtime/sessions/*.sqlite3-wal",
+    "omp_agent/agent.db-shm",
+    "omp_agent/agent.db-wal",
+    "omp_agent/cache/**",
+    "omp_agent/managed-skills/**",
+    "omp_agent/memories/**",
+    "omp_agent/sessions/**"
+  ]
+}
+```
+
+The runner computes an attributed digest over every path in each root that does **not** match the allowlist. `live_state_before` and `live_state_after` remain 64-character digests and are equal exactly when no non-ambient path changed, so the analyzer's state-integrity requirement is unchanged. The count of distinct ambient paths that moved is recorded in private campaign state as evidence; no path, count, or new key reaches any public artifact.
+
+The control still fails closed. Any differing path outside the declared allowlist trips `live_state_changed` and invalidates the campaign. The allowlist may never match the live credential database `omp_agent/agent.db` itself; that is enforced in code and mutation-tested, so the amendment cannot be widened into hiding a write to the credential store.
+
+### Attributed quiescence is a pre-spend gate
+
+Before committing spend, sample the attributed digest of both roots across a window at least as long as the campaign's expected duration, under the same monitoring you intend to use, and require it to be identical. If it moves, some non-ambient path is changing and the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell.
+
+The residual is explicit: any file under the declared allowlist may be written in the live roots without tripping the rule. Under normal operation the agent under test is confined to the private run root by `PI_CODING_AGENT_DIR`, `--session-dir`, and its own Laconic data directory, so campaign output cannot reach those live paths. Because that agent runs with `bash` and `write` under auto-approve, a rogue or buggy command could still touch exactly those allowlisted live paths undetected. The live credential database is not one of them.
+
+Do not widen `ambient_paths` to make a failing measurement pass. Diagnose the differing path first: an unanticipated ambient writer is a manifest amendment that needs owner approval and produces a new digest, while a campaign-caused write is the exact defect the rule exists to catch.
 
 ## Interpretation
 
