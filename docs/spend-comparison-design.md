@@ -164,3 +164,7 @@ The allowlist is not an ad-hoc patch list. It states one rule: mutable per-sessi
 Amending the manifest changes its digest to `0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28`. The superseded M20-v2 digest is `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`. It was never executed and produced no private root, report, or observation, so nothing is lost by revising it. Any spend authorization bound to that digest is void; a run against the revised manifest needs a fresh explicit owner instruction naming the new digest, and that instruction should be granted only after an attributed-quiescence measurement over a campaign-length window returns identical.
 
 Nothing else changes. The population, order, prompts and their digests, model and version pins, request and wall limits, price snapshot, statistical parameters, stopping-rule names, public report keys, privacy boundary, `$10.00` cap, and `execution_authorized: false` are exactly as before.
+
+## 14. Confirmatory study
+
+The completed M20-v2 pilot sized a confirmatory study at 15 tasks with two repetitions. That figure is a point estimate from four paired differences and is not a funding basis on its own; the draft [confirmatory pre-registration](spend-comparison-confirmatory.md) records the sample-size uncertainty, the eleven missing task fixtures, and the claims-boundary reversal a confirmatory study entails. No confirmatory manifest exists and no confirmatory spend is authorized.
