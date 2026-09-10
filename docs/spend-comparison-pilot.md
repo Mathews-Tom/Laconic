@@ -171,11 +171,11 @@ Before committing spend, sample the attributed digest of both roots across a win
 ```bash
 uv run python -m tools.controlled_spend pilot quiesce \
   --manifest "$V2_MANIFEST" \
-  --seconds 7200 \
-  --interval 300
+  --seconds 1800 \
+  --interval 120
 ```
 
-It exits zero only when every sample over the whole window is identical. On any movement it exits non-zero and names the root and the differing non-ambient paths, so the writer can be identified rather than guessed. Its output is local operator diagnostics and is never written into a public artifact.
+It prints a heartbeat for the baseline and every sample — index, elapsed, remaining, and whether anything moved — so a long window reports progress instead of appearing to hang. It exits zero only when every sample over the whole window is identical. On any movement it exits non-zero and names the root and the differing non-ambient paths, so the writer can be identified rather than guessed. Its output is local operator diagnostics and is never written into a public artifact.
 
 If it moves, some non-ambient path is changing and the campaign will end `incomplete` with `live_state_changed`, every attempted cell will be classified a protocol failure, and the spend will buy no valid cell.
 
@@ -199,11 +199,11 @@ Run the whole sequence from a plain shell with no coding-agent session open.
    pgrep -fl 'pi-coding-agent|omp' || echo "no agent process"
    ```
 
-2. Prove quiescence for at least the campaign's expected duration. Do not shorten this window to save time; a shorter window is not evidence.
+2. Prove quiescence for at least the campaign's expected duration, and size the window to that duration rather than padding it. The M20-v2 campaign took roughly nine minutes end to end — 576 seconds of agent time across 24 cells, median 25 seconds per cell against the 180-second limit — so 1800 seconds carries ample margin. Do not shorten it below the expected duration; a shorter window is not evidence. Each sample rehashes both roots and takes tens of seconds, so an interval below about 60 seconds buys nothing.
 
    ```bash
    uv run python -m tools.controlled_spend pilot quiesce \
-     --manifest "$V2_MANIFEST" --seconds 7200 --interval 300
+     --manifest "$V2_MANIFEST" --seconds 1800 --interval 120
    ```
 
 3. Mint the single-use authorization receipt. `pilot authorize` is the supported way to do it; hand-writing the JSON is error-prone and a wrong mode, digest, or root only surfaces later as a refusal.

@@ -14,6 +14,7 @@ from tools.controlled_spend.manifest import (
     verify_completion_oracles,
 )
 from tools.controlled_spend.runner import (
+    QuiescenceSample,
     live_state_roots,
     measure_quiescence,
     preflight_environment,
@@ -99,11 +100,22 @@ def main() -> int:
         return 0
     if args.command == "pilot" and args.pilot_command == "quiesce":
         manifest = validate_manifest_file(args.manifest)
+
+        def emit(sample: QuiescenceSample) -> None:
+            state = "moved" if sample.moved else "quiescent"
+            label = "baseline" if sample.index == 0 else f"sample={sample.index}"
+            print(
+                f"{label} elapsed={sample.elapsed_seconds:.0f}s "
+                f"remaining={sample.remaining_seconds:.0f}s {state}",
+                flush=True,
+            )
+
         moved = measure_quiescence(
             manifest,
             live_state_roots(),
             seconds=args.seconds,
             interval=args.interval,
+            on_sample=emit,
         )
         if moved:
             for name, paths in sorted(moved.items()):
