@@ -22,6 +22,7 @@ from tools.controlled_spend.manifest import (
 )
 from tools.controlled_spend.runner import (
     PilotRunnerError,
+    QuiescenceSample,
     _cleanup_credential_snapshot,
     _execute_run,
     _run_diagnosis,
@@ -465,3 +466,85 @@ def test_quiescence_refuses_the_permanently_closed_v1_pilot(tmp_path: Path) -> N
             interval=1,
             sleep=lambda _: None,
         )
+
+
+def test_quiescence_reports_the_baseline_and_every_sample(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    roots = _quiet_roots(tmp_path)
+    clock = itertools.count(step=1.0)
+    seen: list[QuiescenceSample] = []
+
+    moved = measure_quiescence(
+        manifest,
+        roots,
+        seconds=3,
+        interval=1,
+        sleep=lambda _: None,
+        now=lambda: float(next(clock)),
+        on_sample=seen.append,
+    )
+
+    assert moved == {}
+    assert [s.index for s in seen] == list(range(len(seen)))
+    assert seen[0].index == 0 and seen[0].moved == {}
+    assert all(s.moved == {} for s in seen)
+    assert [s.elapsed_seconds for s in seen] == sorted(s.elapsed_seconds for s in seen)
+    assert all(s.remaining_seconds >= 0.0 for s in seen)
+
+
+def test_quiescence_reports_the_sample_that_moved(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    roots = _quiet_roots(tmp_path)
+    seen: list[QuiescenceSample] = []
+
+    def tamper(_: float) -> None:
+        (roots["omp_agent"] / "agent.db").write_bytes(b"checkpointed")
+
+    moved = measure_quiescence(
+        manifest,
+        roots,
+        seconds=3,
+        interval=1,
+        sleep=tamper,
+        on_sample=seen.append,
+    )
+
+    assert moved == {"omp_agent": ("omp_agent/agent.db",)}
+    assert seen[-1].moved == moved
+    assert seen[-1].index == len(seen) - 1
+    assert all(s.moved == {} for s in seen[:-1])
+
+
+def test_quiesce_cli_prints_a_heartbeat_for_every_sample(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake(*_: object, on_sample: object = None, **__: object) -> dict[str, tuple[str, ...]]:
+        assert callable(on_sample)
+        on_sample(QuiescenceSample(index=0, elapsed_seconds=0.0, remaining_seconds=60.0, moved={}))
+        on_sample(QuiescenceSample(index=1, elapsed_seconds=30.0, remaining_seconds=30.0, moved={}))
+        return {}
+
+    monkeypatch.setattr(cli_module, "measure_quiescence", fake)
+    monkeypatch.setattr(cli_module, "live_state_roots", lambda: {"omp_agent": Path("/nonexistent")})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "controlled-spend",
+            "pilot",
+            "quiesce",
+            "--manifest",
+            str(DEFAULT_V2_MANIFEST_PATH),
+            "--seconds",
+            "60",
+            "--interval",
+            "30",
+        ],
+    )
+
+    assert cli_module.main() == 0
+
+    out = capsys.readouterr().out
+    assert "baseline elapsed=0s remaining=60s quiescent" in out
+    assert "sample=1 elapsed=30s remaining=30s quiescent" in out
+    assert "quiescent=true" in out

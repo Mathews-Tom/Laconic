@@ -863,6 +863,16 @@ def run_campaign(
             raise PilotRunnerError(cast(str, state["gateway_halted_reason"]))
 
 
+@dataclass(frozen=True, slots=True)
+class QuiescenceSample:
+    """One observation of the attributed live state during a quiescence window."""
+
+    index: int
+    elapsed_seconds: float
+    remaining_seconds: float
+    moved: dict[str, tuple[str, ...]]
+
+
 def changed_attributed_paths(
     before: LiveStateSnapshot, after: LiveStateSnapshot
 ) -> tuple[str, ...]:
@@ -879,11 +889,14 @@ def measure_quiescence(
     interval: int,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    on_sample: Callable[[QuiescenceSample], None] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Sample the attributed live state until the window elapses.
 
     Returns an empty mapping when every sample was identical. Otherwise returns the
     non-ambient paths that moved, keyed by live-state root, so the writer can be named.
+    `on_sample` observes the baseline and every comparison as it happens, so a long
+    window reports progress instead of appearing to hang.
     """
     if manifest.payload["schema_version"] != 2:
         raise PilotRunnerError("only the M20-v2 pilot declares an ambient live-state allowlist")
@@ -894,14 +907,33 @@ def measure_quiescence(
         name: live_state_snapshot(path, prefix=name, ambient=ambient)
         for name, path in roots.items()
     }
-    deadline = now() + seconds
+    started = now()
+    deadline = started + seconds
+    index = 0
+
+    def report(moved: dict[str, tuple[str, ...]]) -> None:
+        if on_sample is None:
+            return
+        elapsed = now() - started
+        on_sample(
+            QuiescenceSample(
+                index=index,
+                elapsed_seconds=elapsed,
+                remaining_seconds=max(0.0, seconds - elapsed),
+                moved=dict(moved),
+            )
+        )
+
+    report({})
     while now() < deadline:
         sleep(min(interval, max(0.0, deadline - now())))
+        index += 1
         moved: dict[str, tuple[str, ...]] = {}
         for name, path in roots.items():
             current = live_state_snapshot(path, prefix=name, ambient=ambient)
             if current.digest != baseline[name].digest:
                 moved[name] = changed_attributed_paths(baseline[name], current)
+        report(moved)
         if moved:
             return moved
     return {}
