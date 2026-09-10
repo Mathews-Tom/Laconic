@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
@@ -152,10 +153,11 @@ def _sha256(path: Path) -> str:
 
 @dataclass(frozen=True, slots=True)
 class LiveStateSnapshot:
-    """One attributed view of a live root: non-ambient digest plus ambient entries."""
+    """One attributed view of a live root: non-ambient digest, entries, and ambient entries."""
 
     digest: str
     ambient: dict[str, str]
+    attributed: dict[str, str]
 
 
 def live_state_snapshot(
@@ -172,9 +174,14 @@ def live_state_snapshot(
     """
     digest = hashlib.sha256()
     ambient_entries: dict[str, str] = {}
+    attributed_entries: dict[str, str] = {}
     if not root.exists():
         digest.update(b"m")
-        return LiveStateSnapshot(digest=digest.hexdigest(), ambient=ambient_entries)
+        return LiveStateSnapshot(
+            digest=digest.hexdigest(),
+            ambient=ambient_entries,
+            attributed=attributed_entries,
+        )
     if root.is_symlink() or not root.is_dir():
         raise PilotRunnerError("live-state root is not an ordinary directory")
     for path in sorted(root.rglob("*")):
@@ -214,8 +221,13 @@ def live_state_snapshot(
         if ambient is not None and ambient.fullmatch(qualified):
             ambient_entries[qualified] = entry.hexdigest()
             continue
+        attributed_entries[qualified] = entry.hexdigest()
         digest.update(entry.digest())
-    return LiveStateSnapshot(digest=digest.hexdigest(), ambient=ambient_entries)
+    return LiveStateSnapshot(
+        digest=digest.hexdigest(),
+        ambient=ambient_entries,
+        attributed=attributed_entries,
+    )
 
 
 def tree_state_digest(root: Path) -> str:
@@ -849,3 +861,47 @@ def run_campaign(
         _atomic_private_json(state_path, state)
         if active_error is None and (cleanup_failed or live_state_changed):
             raise PilotRunnerError(cast(str, state["gateway_halted_reason"]))
+
+
+def changed_attributed_paths(
+    before: LiveStateSnapshot, after: LiveStateSnapshot
+) -> tuple[str, ...]:
+    """Return the non-ambient paths that differ between two snapshots of one root."""
+    difference = set(before.attributed.items()) ^ set(after.attributed.items())
+    return tuple(sorted({path for path, _ in difference}))
+
+
+def measure_quiescence(
+    manifest: PilotManifest,
+    roots: dict[str, Path],
+    *,
+    seconds: int,
+    interval: int,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> dict[str, tuple[str, ...]]:
+    """Sample the attributed live state until the window elapses.
+
+    Returns an empty mapping when every sample was identical. Otherwise returns the
+    non-ambient paths that moved, keyed by live-state root, so the writer can be named.
+    """
+    if manifest.payload["schema_version"] != 2:
+        raise PilotRunnerError("only the M20-v2 pilot declares an ambient live-state allowlist")
+    if seconds < 1 or interval < 1 or interval > seconds:
+        raise PilotRunnerError("quiescence window and interval must be positive and ordered")
+    ambient = ambient_paths(manifest)
+    baseline = {
+        name: live_state_snapshot(path, prefix=name, ambient=ambient)
+        for name, path in roots.items()
+    }
+    deadline = now() + seconds
+    while now() < deadline:
+        sleep(min(interval, max(0.0, deadline - now())))
+        moved: dict[str, tuple[str, ...]] = {}
+        for name, path in roots.items():
+            current = live_state_snapshot(path, prefix=name, ambient=ambient)
+            if current.digest != baseline[name].digest:
+                moved[name] = changed_attributed_paths(baseline[name], current)
+        if moved:
+            return moved
+    return {}
