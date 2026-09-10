@@ -12,6 +12,7 @@ from tools.controlled_spend.manifest import (
 )
 from tools.controlled_spend.runner import (
     live_state_roots,
+    measure_quiescence,
     preflight_environment,
     run_campaign,
 )
@@ -33,6 +34,12 @@ def _parser() -> argparse.ArgumentParser:
     pilot_commands = pilot.add_subparsers(dest="pilot_command", required=True)
     preflight = pilot_commands.add_parser("preflight", help="validate pinned local executables")
     _add_manifest_argument(preflight)
+    quiesce = pilot_commands.add_parser(
+        "quiesce", help="prove the attributed live state does not move"
+    )
+    _add_manifest_argument(quiesce)
+    quiesce.add_argument("--seconds", type=int, required=True)
+    quiesce.add_argument("--interval", type=int, default=300)
     run = pilot_commands.add_parser("run", help="execute every selected frozen cell once")
     _add_manifest_argument(run)
     run.add_argument("--authorization", type=Path, required=True)
@@ -79,6 +86,23 @@ def main() -> int:
             f"manifest={manifest.digest} omp=headroom=ready "
             f"tasks={len(manifest.tasks)} runs={len(manifest.run_order)}"
         )
+        return 0
+    if args.command == "pilot" and args.pilot_command == "quiesce":
+        manifest = validate_manifest_file(args.manifest)
+        moved = measure_quiescence(
+            manifest,
+            live_state_roots(),
+            seconds=args.seconds,
+            interval=args.interval,
+        )
+        if moved:
+            for name, paths in sorted(moved.items()):
+                print(f"moved={name} paths={len(paths)}")
+                for path in paths:
+                    print(f"  {path}")
+            print(f"quiescent=false seconds={args.seconds}")
+            return 1
+        print(f"quiescent=true roots={len(live_state_roots())} seconds={args.seconds}")
         return 0
     if args.command == "pilot" and args.pilot_command == "run":
         manifest = validate_manifest_file(args.manifest)

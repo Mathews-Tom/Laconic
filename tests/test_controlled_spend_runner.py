@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+import tools.controlled_spend.__main__ as cli_module
 import tools.controlled_spend.runner as runner_module
 from tools.controlled_spend.manifest import (
     DEFAULT_MANIFEST_PATH,
@@ -26,6 +29,7 @@ from tools.controlled_spend.runner import (
     build_run_environment,
     cleanup_agent_directory,
     live_state_snapshot,
+    measure_quiescence,
     snapshot_agent_database,
     tree_state_digest,
 )
@@ -343,3 +347,121 @@ def test_ambient_attribution_requires_the_root_prefix(tmp_path: Path) -> None:
     assert (
         live_state_snapshot(root, prefix="laconic_runtime", ambient=ambient).digest != before.digest
     )
+
+
+def _quiet_roots(tmp_path: Path) -> dict[str, Path]:
+    runtime = tmp_path / "laconic_runtime"
+    (runtime / "observe").mkdir(parents=True)
+    (runtime / "observe" / "audit.jsonl").write_bytes(b"receipt")
+    (runtime / "ledger.sqlite3").write_bytes(b"runtime")
+    agent = tmp_path / "omp_agent"
+    (agent / "sessions").mkdir(parents=True)
+    (agent / "agent.db").write_bytes(b"credentials")
+    return {"laconic_runtime": runtime, "omp_agent": agent}
+
+
+def test_quiescence_passes_while_only_ambient_paths_move(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    roots = _quiet_roots(tmp_path)
+    ticks = itertools.count()
+    clock = itertools.count(step=1.0)
+
+    def churn(_: float) -> None:
+        index = next(ticks)
+        (roots["laconic_runtime"] / "observe" / "audit.jsonl").write_bytes(b"receipt" * index)
+        (roots["omp_agent"] / "sessions" / f"s{index}.jsonl").write_bytes(b"turn")
+
+    moved = measure_quiescence(
+        manifest,
+        roots,
+        seconds=3,
+        interval=1,
+        sleep=churn,
+        now=lambda: float(next(clock)),
+    )
+
+    assert moved == {}
+
+
+def test_quiescence_fails_and_names_a_credential_database_write(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    roots = _quiet_roots(tmp_path)
+
+    def tamper(_: float) -> None:
+        (roots["omp_agent"] / "agent.db").write_bytes(b"checkpointed")
+
+    moved = measure_quiescence(manifest, roots, seconds=3, interval=1, sleep=tamper)
+
+    assert moved == {"omp_agent": ("omp_agent/agent.db",)}
+
+
+def test_quiescence_names_a_new_undeclared_path(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+    roots = _quiet_roots(tmp_path)
+
+    def add(_: float) -> None:
+        (roots["laconic_runtime"] / "stray.json").write_bytes(b"new")
+
+    moved = measure_quiescence(manifest, roots, seconds=3, interval=1, sleep=add)
+
+    assert moved == {"laconic_runtime": ("laconic_runtime/stray.json",)}
+
+
+def test_quiescence_rejects_an_interval_wider_than_the_window(tmp_path: Path) -> None:
+    manifest = validate_manifest_file(DEFAULT_V2_MANIFEST_PATH)
+
+    with pytest.raises(PilotRunnerError, match="positive and ordered"):
+        measure_quiescence(
+            manifest,
+            _quiet_roots(tmp_path),
+            seconds=1,
+            interval=5,
+            sleep=lambda _: None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("moved", "expected_code", "expected_output"),
+    [
+        ({}, 0, "quiescent=true"),
+        ({"omp_agent": ("omp_agent/agent.db",)}, 1, "omp_agent/agent.db"),
+    ],
+)
+def test_quiesce_cli_exit_code_follows_the_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    moved: dict[str, tuple[str, ...]],
+    expected_code: int,
+    expected_output: str,
+) -> None:
+    monkeypatch.setattr(cli_module, "measure_quiescence", lambda *_, **__: moved)
+    monkeypatch.setattr(cli_module, "live_state_roots", lambda: {"omp_agent": Path("/nonexistent")})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "controlled-spend",
+            "pilot",
+            "quiesce",
+            "--manifest",
+            str(DEFAULT_V2_MANIFEST_PATH),
+            "--seconds",
+            "2",
+            "--interval",
+            "1",
+        ],
+    )
+
+    assert cli_module.main() == expected_code
+    assert expected_output in capsys.readouterr().out
+
+
+def test_quiescence_refuses_the_permanently_closed_v1_pilot(tmp_path: Path) -> None:
+    with pytest.raises(PilotRunnerError, match="only the M20-v2 pilot"):
+        measure_quiescence(
+            validate_manifest_file(DEFAULT_MANIFEST_PATH),
+            _quiet_roots(tmp_path),
+            seconds=2,
+            interval=1,
+            sleep=lambda _: None,
+        )
