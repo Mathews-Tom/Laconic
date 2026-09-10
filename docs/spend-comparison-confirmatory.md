@@ -1,6 +1,6 @@
 # Controlled Spend Confirmatory Study — Draft Pre-Registration
 
-**Status: draft for owner review. Not authorized, not funded, not executable.** No confirmatory manifest exists, no manifest digest has been minted, no fixture beyond the four pilot tasks has been authored, and no provider request may be made against this document. Scoping it surfaced three blockers that change the cost and the claims boundary materially; each needs an owner decision before a manifest is committed.
+**Status: design selected, remaining decisions open. Not authorized, not funded, not executable.** No confirmatory manifest exists, no manifest digest has been minted, no fixture beyond the four pilot tasks has been authored, and no provider request may be made against this document. Scoping it surfaced three blockers that change the cost and the claims boundary materially; each needs an owner decision before a manifest is committed.
 
 ## 1. What the pilot licensed
 
@@ -29,18 +29,60 @@ Taking the two-sided endpoints together, the 95% confidence interval for the req
 
 Estimated spend assumes the pilot's observed `$0.041564` per cell holds. That is itself an extrapolation from 24 cells and should be treated as a planning figure, not a cap.
 
-### Recommended response
+### Selected design
 
-Two defensible designs, in preference order.
+**The owner selected the internal-pilot two-stage design.** Section 2a specifies it. The alternatives are recorded for the record: a single stage sized to the one-sided 80% upper limit at 43 tasks and roughly `$10.72`, or to the one-sided 95% upper limit at 121 tasks and roughly `$30.18`. A fixed 15-task single stage was rejected as the option most likely to spend money and answer nothing.
 
-1. **Internal-pilot two-stage design.** Freeze a first stage of 15 tasks, re-estimate σ from the completed stage, and recompute the total requirement before deciding whether to fund a second stage. This spends `$3.74` to buy a far better σ than four pairs gave, then makes the larger funding decision on evidence.
+## 2a. The two-stage effect-withheld protocol
 
-   Pre-specification alone does not control type I error; the *method* does. The re-estimation must be **blinded — variance only**. Stage one's paired differences may be used to re-estimate σ and nothing else; the interim effect estimate must not be inspected, and must not influence whether stage two runs, how large it is, or when to stop. Blinded variance re-estimation has negligible type I inflation. Any use of the interim effect requires a combination test or a conditional-error rule instead, and the pre-registration must say which it uses before data exists.
+Selecting the design fixes the following. Every rule here is pre-specified and may not be changed once stage one has produced data.
 
-   Stage one's observations **are pooled** into the final effect estimate, so the two stages form one study with one analysis, not a pilot followed by a replication. The final report states the total task count actually run and the fact that it was re-estimated.
-2. **Size to a one-sided upper confidence limit.** Fund 43 tasks against the one-sided 80% upper limit, roughly `$10.72`, or 121 tasks against the one-sided 95% upper limit, roughly `$30.18`. Simpler and single-shot, but it pays for power that may not be needed and still is not guaranteed.
+### Why two stages pay for themselves
 
-A fixed 15-task single-stage study is **not recommended**. It is the option most likely to spend money and answer nothing.
+Sizing must use an upper confidence limit on σ rather than a point estimate, because only under-estimating σ is harmful. The penalty for that uncertainty shrinks as the estimate improves. At the pilot's three degrees of freedom the one-sided 80% upper limit sits `1.7276×` above the point estimate; after a 15-task stage one, at fourteen degrees of freedom, it sits `1.2160×` above. Stage one therefore buys a 30% reduction in the uncertainty tax for `$3.74`, and that is the entire argument for the design.
+
+### Stage one
+
+Fifteen tasks, two repetitions, three arms — 90 cells, an estimated `$3.74`, and roughly 35 minutes of wall clock scaled from the pilot's observed nine minutes over 24 cells. Everything else follows the frozen M20-v2 contract unchanged: model and version pins, per-cell request ceiling, wall limit, price snapshot, gateway cap enforcement, receipt binding, quiescence gate, and privacy allowlist.
+
+### Effect-withheld re-estimation
+
+After stage one completes, σ is re-estimated from its paired task log-cost differences. **Only σ may leave that computation.** The interim effect estimate, arm means, and the sign of any difference must not be inspected, reported, or allowed to influence whether stage two runs, how large it is, or whether the study stops.
+
+The term is *effect-withheld*, not blinded in the classical sense: the three arms are known and cannot be allocation-blinded. What is withheld is the interim effect — the mean and sign of the paired differences — while σ̂₁, a nuisance parameter, is used.
+
+A dedicated re-estimation command makes the sanctioned path safe: it emits an exact, allowlisted output of the re-estimated σ, its degrees of freedom, and the recomputed task total, and cannot serialize an effect, an arm label attached to a cost, or a per-task value. It must exist and be mutation-tested before stage one runs.
+
+Be precise about what that does and does not prevent. It guarantees the sanctioned path is effect-free. It does **not** make the effect unreadable: `analysis-private.json` already holds `paired_task_log_cost_differences` and `task_arm_mean_cost_usd` on disk for stage one, and any operator with read access to the private root can inspect them. The command is a safe alternative to doing that, not a barrier against it. Preventing direct inspection additionally requires operator discipline and access control, and this protocol depends on both. Anyone who does look at the interim effect has broken the design and must say so, because the alpha argument below no longer holds for them.
+
+Effect-withheld, variance-only re-estimation has negligible type I inflation, because under normality the sample standard deviation of the paired differences is independent of their mean, so the resizing decision is independent of the test statistic. **Alpha therefore remains 0.05 two-sided with no adjustment.** Any use of the interim effect would instead require a combination test or a conditional-error rule; this design deliberately forgoes that in exchange for keeping the analysis simple and the alpha honest.
+
+### The re-estimation rule
+
+Let `σ̂₁` be the standard deviation of the stage-one paired differences on fourteen degrees of freedom. The multiplier is fixed at the stage-one degrees of freedom and is not recomputed on the larger final sample: `σ̂₁` is always estimated from the 15-task stage one before stage two exists, and recomputing the limit on the final degrees of freedom would shrink the factor and under-inflate the requirement. The total task requirement is recomputed at the **one-sided 80% upper confidence limit** of `σ̂₁`, not at its point estimate — applying the point estimate again would repeat the pilot's mistake at a smaller scale:
+
+`n_total = ⌈ (z_{α/2} + z_β)² · (σ̂₁ · 1.2160)² / Δ² ⌉`, with `Δ = |ln 0.9|`.
+
+Stage two runs `max(0, n_total − 15)` additional tasks. If `n_total ≤ 15` the study is already complete and stage two does not run.
+
+| Stage-one `σ̂₁` | 80% UCL | `n_total` | Stage-two tasks | Total estimated spend |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.0800 | 0.0973 | 7 | 0 | $1.75 |
+| 0.1000 | 0.1216 | 11 | 0 | $2.74 |
+| 0.1412 (pilot value) | 0.1717 | 21 | 6 | $5.24 |
+| 0.1800 | 0.2189 | 34 | 19 | $8.48 |
+| 0.2439 | 0.2966 | 63 | 48 | $15.71 |
+| 0.3200 | 0.3891 | 108 | 93 | $26.93 |
+
+Spend figures extrapolate the pilot's observed `$0.041564` per cell and are planning estimates, not caps.
+
+### Pooling, stopping, and the cap
+
+Stage one's observations **pool** into the final effect estimate. The two stages are one study with one analysis over all `n_total` tasks, not a pilot followed by a replication. There is no interim analysis for efficacy or for futility, and no early stopping; the only decision taken between stages is the size of stage two.
+
+The recomputed `n_total` must be checked against a pre-declared maximum before stage two is funded. If the rule demands more tasks than that maximum allows, the study **stops and reports that it stopped for infeasibility** — it does not silently run an underpowered stage two. That maximum is open decision four and is not the pilot's `$10.00`.
+
+The final report states the total task count actually run, that it was re-estimated under this rule, and the observed `σ̂₁` that drove it.
 
 ## 3. Blocker two — eleven task fixtures do not exist
 
@@ -67,7 +109,7 @@ The pre-registration must therefore fix, before any data exists:
 
 ## 5. Structural work in the tooling
 
-`TASK_COUNT` is a frozen module constant of `4` in `tools/controlled_spend/manifest.py`, enforced for every manifest, and `RUN_COUNT` derives from it. A confirmatory manifest with a different task count requires making the task count schema-scoped so the M20-v1 and M20-v2 manifests continue to validate byte-identically under their existing digests. That is a contained change with an obvious regression test, but it must land and be reviewed before a confirmatory manifest can be committed.
+`TASK_COUNT` is a frozen module constant of `4` in `tools/controlled_spend/manifest.py`, enforced for every manifest, and `RUN_COUNT` derives from it. A confirmatory manifest with a different task count requires making the task count schema-scoped so the M20-v1 and M20-v2 manifests continue to validate byte-identically under their existing digests. That is a contained change with an obvious regression test, but it is deliberately **not** made yet. Parameterizing the task count today would add generality with a single call site, for a study that is not funded and whose final task count is unknown; the repository's own rule is to add an abstraction only once a second real call site exists. It lands together with the confirmatory manifest, where it has two call sites and a real test, and it must be reviewed before that manifest is committed.
 
 The gateway cap, receipt binding, quiescence gate, and privacy allowlist all carry over unchanged. A confirmatory campaign will run longer than nine minutes in proportion to its cell count, so the quiescence window must be re-sized to the new expected duration.
 
@@ -75,10 +117,14 @@ The gateway cap, receipt binding, quiescence gate, and privacy allowlist all car
 
 None of these can be resolved from the pilot data.
 
-1. Two-stage internal pilot with blinded variance-only re-estimation, or single-stage sized to a one-sided upper limit at 43 or 121 tasks, or something else.
+1. ~~Design.~~ **Resolved:** the owner selected the internal-pilot two-stage design with effect-withheld, variance-only re-estimation. Section 2a specifies it.
 2. Who authors the 11 or 39 new fixtures, and against what diversity criterion.
 3. Whether the project is prepared to publish a comparative cost claim in either direction, including an unfavourable one.
 4. The spend cap for the confirmatory campaign, which is not the pilot's `$10.00`.
+
+## 6a. This pre-registration cannot be finalized yet
+
+A pre-registration is only worth having if it commits, before data exists, to publishing whatever comes out. Open decision three is exactly that commitment, and it is unresolved. Until it is answered, section 2a is a specified design rather than a binding protocol, and no confirmatory manifest may be committed against it. Selecting the design does not resolve it: choosing how to run the study is not the same as agreeing to publish an unfavourable result from it.
 
 ## 7. Not authorized by this document
 
