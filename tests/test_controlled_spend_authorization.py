@@ -10,11 +10,13 @@ from typing import Any
 import pytest
 
 import tools.controlled_spend.__main__ as cli_module
+import tools.controlled_spend.authorization as authorization_module
 import tools.controlled_spend.runner as runner_module
 from tools.controlled_spend.authorization import (
     ExecutionAuthorization,
     PilotAuthorizationError,
     consume_execution_authorization,
+    create_execution_authorization,
     load_execution_authorization,
     verify_execution_authorization,
 )
@@ -416,3 +418,165 @@ def test_receipt_reached_through_a_symlinked_prefix_is_refused(tmp_path: Path) -
             artifact_root=artifact_root,
             excluded_roots=(tmp_path / "inside",),
         )
+
+
+def test_minted_receipt_is_accepted_and_owner_only(tmp_path: Path) -> None:
+    manifest = _v2()
+    artifact_root = tmp_path / "campaign"
+    output = tmp_path / "private" / "authorization.json"
+
+    authorization = create_execution_authorization(
+        output,
+        manifest=manifest,
+        artifact_root=artifact_root,
+        confirmed_digest=manifest.digest,
+    )
+
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert output.parent.stat().st_mode & 0o777 == 0o700
+    assert authorization.manifest_sha256 == manifest.digest
+    assert authorization.artifact_root == artifact_root.absolute()
+    assert str(authorization.total_spend_usd) == "10.00"
+    reloaded = load_execution_authorization(output, manifest=manifest, artifact_root=artifact_root)
+    assert reloaded.authorization_id == authorization.authorization_id
+
+
+def test_minting_refuses_a_digest_the_operator_did_not_confirm(tmp_path: Path) -> None:
+    manifest = _v2()
+    output = tmp_path / "private" / "authorization.json"
+
+    with pytest.raises(PilotAuthorizationError, match="confirmed digest does not match"):
+        create_execution_authorization(
+            output,
+            manifest=manifest,
+            artifact_root=tmp_path / "campaign",
+            confirmed_digest="f" * 64,
+        )
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_minting_refuses_an_existing_artifact_root(tmp_path: Path) -> None:
+    manifest = _v2()
+    artifact_root = tmp_path / "campaign"
+    artifact_root.mkdir(mode=0o700)
+    output = tmp_path / "private" / "authorization.json"
+
+    with pytest.raises(PilotAuthorizationError, match="artifact root already exists"):
+        create_execution_authorization(
+            output,
+            manifest=manifest,
+            artifact_root=artifact_root,
+            confirmed_digest=manifest.digest,
+        )
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_minting_refuses_to_overwrite_an_existing_receipt(tmp_path: Path) -> None:
+    manifest = _v2()
+    artifact_root = tmp_path / "campaign"
+    output = _write_receipt(tmp_path / "private", _document(manifest, artifact_root))
+    original = output.read_bytes()
+
+    with pytest.raises(PilotAuthorizationError, match="receipt path already exists"):
+        create_execution_authorization(
+            output,
+            manifest=manifest,
+            artifact_root=artifact_root,
+            confirmed_digest=manifest.digest,
+        )
+
+    assert output.read_bytes() == original
+
+
+def test_minting_refuses_an_output_inside_a_live_state_root(tmp_path: Path) -> None:
+    manifest = _v2()
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    output = live_root / "private" / "authorization.json"
+
+    with pytest.raises(PilotAuthorizationError, match="must live outside"):
+        create_execution_authorization(
+            output,
+            manifest=manifest,
+            artifact_root=tmp_path / "campaign",
+            confirmed_digest=manifest.digest,
+            excluded_roots=(live_root,),
+        )
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_minting_refuses_the_permanently_closed_v1_pilot(tmp_path: Path) -> None:
+    v1 = validate_manifest_file(DEFAULT_MANIFEST_PATH)
+    output = tmp_path / "private" / "authorization.json"
+
+    with pytest.raises(PilotAuthorizationError, match="only the M20-v2 pilot"):
+        create_execution_authorization(
+            output,
+            manifest=v1,
+            artifact_root=tmp_path / "campaign",
+            confirmed_digest=v1.digest,
+        )
+
+    assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_authorize_cli_prints_no_receipt_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = _v2()
+    output = tmp_path / "private" / "authorization.json"
+    monkeypatch.setattr(cli_module, "live_state_roots", lambda: {})
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "controlled-spend",
+            "pilot",
+            "authorize",
+            "--manifest",
+            str(DEFAULT_V2_MANIFEST_PATH),
+            "--artifact-root",
+            str(tmp_path / "campaign"),
+            "--confirm-digest",
+            manifest.digest,
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert cli_module.main() == 0
+
+    printed = capsys.readouterr().out
+    assert "authorization=" in printed
+    assert "execution_authorized" not in printed
+    assert "single_use" not in printed
+    assert output.read_text() not in printed
+
+
+def test_minting_leaves_no_receipt_when_the_verifying_reload_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _v2()
+    output = tmp_path / "private" / "authorization.json"
+
+    def refuse(*_: object, **__: object) -> ExecutionAuthorization:
+        raise PilotAuthorizationError("synthetic verification failure")
+
+    monkeypatch.setattr(authorization_module, "load_execution_authorization", refuse)
+
+    with pytest.raises(PilotAuthorizationError, match="synthetic verification failure"):
+        create_execution_authorization(
+            output,
+            manifest=manifest,
+            artifact_root=tmp_path / "campaign",
+            confirmed_digest=manifest.digest,
+        )
+
+    assert not output.exists()
