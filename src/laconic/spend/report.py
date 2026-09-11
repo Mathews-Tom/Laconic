@@ -98,6 +98,7 @@ ALLOWED_ESTIMATE_KEYS: Final = frozenset(
         "avoided_share_pct_low",
         "avoided_share_pct_high",
         "denominator_usd",
+        "fallback_priced_cost_share_pct",
     }
 )
 
@@ -105,6 +106,13 @@ ALLOWED_ESTIMATE_KEYS: Final = frozenset(
 #: verified by the privacy gate, so an estimate can never be serialized
 #: without the word that says it is not a measurement.
 ESTIMATE_BASIS: Final = "modelled_not_measured"
+
+#: Above this share of the estimate's own denominator coming from models
+#: with no published list price, the dollar figures stop being quotable.
+#: The per-token rates are divided out of that same cost, so the band is
+#: then built on prices nobody published. The *share* survives, because the
+#: same error sits in numerator and denominator and largely cancels.
+FALLBACK_SHARE_QUOTABLE_MAX_PCT: Final = 25.0
 
 #: Exactly the keys a serialized report may carry.
 ALLOWED_REPORT_KEYS: Final = frozenset(
@@ -132,6 +140,7 @@ ALLOWED_REPORT_KEYS: Final = frozenset(
         "codec",
         "codec_active_sessions_without_priced_turns",
         "unpriced_models",
+        "fallback_priced_cost_share_pct",
         "unknown_usage_keys",
         "sessions",
         "estimate",
@@ -276,7 +285,10 @@ class SpendReport:
 
 
 def _estimate(
-    tokens: dict[str, int], cost: dict[str, float], chars_avoided: int
+    tokens: dict[str, int],
+    cost: dict[str, float],
+    chars_avoided: int,
+    fallback_share_pct: float,
 ) -> dict[str, Any] | None:
     """Model the provider cost the codec's removed characters avoided.
 
@@ -335,6 +347,7 @@ def _estimate(
         "avoided_share_pct_low": round(100.0 * cost_low / denominator, 6),
         "avoided_share_pct_high": round(100.0 * cost_high / denominator, 6),
         "denominator_usd": round(denominator, 6),
+        "fallback_priced_cost_share_pct": round(fallback_share_pct, 6),
     }
 
 
@@ -395,7 +408,15 @@ def build_report(composition: Composition) -> SpendReport:
         # Always present, `None` when the corpus cannot support the model.
         # An absent key would make the schema optional; a zero would read as
         # "the codec saved nothing" rather than "this corpus cannot say".
-        "estimate": _estimate(matched_tokens, matched_cost, activity.chars_avoided),
+        "fallback_priced_cost_share_pct": round(
+            100.0 * composition.fallback_priced_cost_share(), 6
+        ),
+        "estimate": _estimate(
+            matched_tokens,
+            matched_cost,
+            activity.chars_avoided,
+            100.0 * composition.fallback_priced_cost_share(matched),
+        ),
     }
     return SpendReport(payload=payload)
 
@@ -489,7 +510,9 @@ def _estimate_lines(estimate: dict[str, Any] | None, host_cost: float) -> list[s
             "that cannot answer the question.",
             "",
         ]
-    return [
+    share = float(estimate["fallback_priced_cost_share_pct"])
+    quotable = share <= FALLBACK_SHARE_QUOTABLE_MAX_PCT
+    lines = [
         "",
         "## Modelled cost avoided",
         "",
@@ -497,6 +520,20 @@ def _estimate_lines(estimate: dict[str, Any] | None, host_cost: float) -> list[s
         "this is what the removed characters *would have* cost, not an observed "
         "saving. It is a band because more than one input is assumed.",
         "",
+    ]
+    if not quotable:
+        lines += [
+            f"> **Do not quote the dollar figures.** {share:.1f}% of the cost these "
+            "are derived from comes from models with no published list price, "
+            "billed at a fallback rate. The per-token prices below are divided out "
+            "of that same cost, so the dollars inherit the error. The *share* is "
+            "far more robust, because the same error sits in both the numerator "
+            "and the denominator and largely cancels. Run "
+            "`laconic research spend report` and check the unpriced-model list "
+            "below.",
+            "",
+        ]
+    return lines + [
         f"- **{_usd(estimate['avoided_cost_usd_low'])} to "
         f"{_usd(estimate['avoided_cost_usd_high'])}** avoided, against a modelled "
         f"{_usd(estimate['denominator_usd'])} for the same sessions",

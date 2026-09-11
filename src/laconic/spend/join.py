@@ -152,6 +152,31 @@ class Composition:
         """Models billed at the fallback price because no list price is known."""
         return unpriced_models(self.usage())
 
+    def fallback_priced_cost_share(
+        self, sessions: Iterable[SessionComposition] | None = None
+    ) -> float:
+        """Fraction of modelled cost attributed to models with no list price.
+
+        Naming the unpriced models is not enough on its own: a reader has
+        no way to tell whether they are a rounding error or most of the
+        bill. On the development corpus they are 44% of it, with one model
+        charged at Sonnet rates while really costing well over them.
+
+        The share matters more than the names because the estimate divides
+        its per-token rates out of this same cost, so a large fallback
+        share means the rates -- and therefore the dollar band -- are built
+        on prices nobody published.
+        """
+        usage = self.usage(sessions)
+        total = session_cost(usage).total
+        if total <= 0:
+            return 0.0
+        unpriced = set(unpriced_models(usage))
+        if not unpriced:
+            return 0.0
+        fallback = session_cost({m: u for m, u in usage.items() if m in unpriced}).total
+        return fallback / total
+
 
 @dataclass(frozen=True, slots=True)
 class CodecActivity:

@@ -1064,11 +1064,22 @@ def _runtime_status(args: argparse.Namespace) -> int:
     if estimate is None:
         print("  not estimated yet — run `laconic savings`")
         return EXIT_OK
-    print(f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}")
-    print(
-        f"  {estimate.low_pct:.2f}% to {estimate.high_pct:.2f}% of a modelled "
-        f"${estimate.denominator_usd:,.2f} for the same sessions"
-    )
+    if estimate.dollars_are_quotable:
+        print(f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}")
+        print(
+            f"  {estimate.low_pct:.2f}% to {estimate.high_pct:.2f}% of a modelled "
+            f"${estimate.denominator_usd:,.2f} for the same sessions"
+        )
+    else:
+        # Lead with the share and demote the dollars. The per-token rates
+        # are divided out of a cost that is mostly fallback-priced here, so
+        # the dollars inherit an error the percentage largely cancels.
+        print(f"  {estimate.low_pct:.2f}% to {estimate.high_pct:.2f}% of spend")
+        print(
+            f"  dollars not quotable: "
+            f"{estimate.fallback_priced_cost_share_pct:.0f}% of the cost behind "
+            "them comes from models with no published list price"
+        )
     # Only suggest rerunning when rerunning would change something.
     # Printing the hint next to a figure computed seconds ago makes the
     # command look as though it did not take effect.
@@ -1958,11 +1969,23 @@ def _savings(args: argparse.Namespace) -> int:
         print("  cached tokens to price them against. That is not a zero.")
         return exit_code
     print("Modelled cost avoided")
-    print(
-        f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}  "
-        f"({estimate.low_pct:.2f}% to {estimate.high_pct:.2f}%)"
-    )
-    print(f"  against a modelled ${estimate.denominator_usd:,.2f} for the same sessions")
+    if estimate.dollars_are_quotable:
+        print(
+            f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}  "
+            f"({estimate.low_pct:.2f}% to {estimate.high_pct:.2f}%)"
+        )
+        print(f"  against a modelled ${estimate.denominator_usd:,.2f} for the same sessions")
+    else:
+        print(f"  {estimate.low_pct:.2f}% to {estimate.high_pct:.2f}% of spend")
+        print(
+            f"  Dollar figures withheld: "
+            f"{estimate.fallback_priced_cost_share_pct:.0f}% of the cost they are "
+            "derived from comes from models with no published list price, billed"
+        )
+        print(
+            "  at a fallback rate. The share largely cancels that error; the "
+            "dollars do not. The written report lists every unpriced model."
+        )
     print("  A model, not a measurement: no session ran without the codec, so")
     print("  this is what the removed characters would have cost, not a saving")
     print("  anyone observed. Every assumption is listed in the written report.")

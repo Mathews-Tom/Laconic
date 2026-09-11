@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- The spend report now reports `fallback_priced_cost_share_pct`: how much of the modelled cost comes from models with no published list price, billed at the Sonnet fallback. Naming the unpriced models was not enough — a reader could not tell whether they were a rounding error or most of the bill. On the development corpus they are 44% of the corpus and **75% of the matched sessions the estimate is built from**.
+- Above a 25% fallback share the dollar figures are withheld from `laconic status`, `laconic savings`, and the written report, which lead with the percentage instead. The estimate divides its per-token rates out of the same cost those models inflate, so the dollars inherit the error while the share largely cancels it — the same error sits in both the numerator and the denominator.
+
 ## [0.11.1] — 2026-09-12
 
 ### Changed

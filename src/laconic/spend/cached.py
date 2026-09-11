@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from laconic.spend.report import FALLBACK_SHARE_QUOTABLE_MAX_PCT
+
 #: How old a band may be before the caller suggests recomputing it. An hour
 #: is long enough that a session's worth of new decisions has probably
 #: landed, and short enough that a figure quoted from it is still about
@@ -36,7 +38,18 @@ class CachedEstimate:
     low_pct: float
     high_pct: float
     denominator_usd: float
+    fallback_priced_cost_share_pct: float
     age_seconds: float
+
+    @property
+    def dollars_are_quotable(self) -> bool:
+        """Whether the dollar figures rest on published prices.
+
+        The share is the honest number when they do not: the same pricing
+        error sits in the numerator's rates and the denominator, so it
+        largely cancels in the percentage and not in the dollars.
+        """
+        return self.fallback_priced_cost_share_pct <= FALLBACK_SHARE_QUOTABLE_MAX_PCT
 
     @property
     def is_stale(self) -> bool:
@@ -93,6 +106,7 @@ def read_cached_estimate(report_json: Path, *, now: float | None = None) -> Cach
             float(estimate["avoided_share_pct_low"]),
             float(estimate["avoided_share_pct_high"]),
             float(estimate["denominator_usd"]),
+            float(estimate.get("fallback_priced_cost_share_pct", 0.0)),
         ]
     except (KeyError, TypeError, ValueError):
         return None
@@ -102,12 +116,13 @@ def read_cached_estimate(report_json: Path, *, now: float | None = None) -> Cach
     # is the same standard applied on the way back in.
     if not all(math.isfinite(value) for value in values):
         return None
-    low_usd, high_usd, low_pct, high_pct, denominator = values
+    low_usd, high_usd, low_pct, high_pct, denominator, fallback_share = values
     return CachedEstimate(
         low_usd=low_usd,
         high_usd=high_usd,
         low_pct=low_pct,
         high_pct=high_pct,
         denominator_usd=denominator,
+        fallback_priced_cost_share_pct=fallback_share,
         age_seconds=max(0.0, (time.time() if now is None else now) - modified),
     )

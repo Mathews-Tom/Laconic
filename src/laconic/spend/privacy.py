@@ -45,7 +45,9 @@ _COST_BLOCK_KEYS: Final = frozenset({"corpus_cost", "matched_cost"})
 _SHARE_BLOCK_KEYS: Final = frozenset({"corpus_shares", "matched_shares"})
 
 #: Report keys whose value is a plain USD float.
-_USD_KEYS: Final = frozenset({"corpus_host_cost_usd", "matched_host_cost_usd"})
+_USD_KEYS: Final = frozenset(
+    {"corpus_host_cost_usd", "matched_host_cost_usd", "fallback_priced_cost_share_pct"}
+)
 
 #: Report keys whose value is a list of model or schema-key identifiers.
 _IDENTIFIER_LIST_KEYS: Final = frozenset({"unpriced_models", "unknown_usage_keys"})
