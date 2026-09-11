@@ -160,7 +160,8 @@ from laconic.setup import (
     detect_hosts,
     verify_runtime,
 )
-from laconic.spend.cli import DEFAULT_SESSION_DIR, WrittenReport, measure, write_report
+from laconic.spend.cached import read_cached_estimate
+from laconic.spend.cli import DEFAULT_SESSION_DIR, REPORT_JSON, WrittenReport, measure, write_report
 from laconic.spend.join import DuplicateSessionError
 from laconic.spend.omp import MalformedSessionError
 from laconic.spend.privacy import PrivacyViolationError
@@ -343,6 +344,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     setup.add_argument("--format", choices=["text", "json"], default="text")
     setup.set_defaults(handler=_setup)
+
+    savings = subcommands.add_parser(
+        "savings",
+        help="estimate the provider cost the codec avoided, and where spend went",
+        description=(
+            "Scan this machine's own sessions and report a modelled band for the "
+            "cost the codec's removed characters would otherwise have incurred. "
+            "The figure is modelled, never measured: no session ran without the "
+            "codec, so no counterfactual exists. Read-only, local, and it never "
+            "contacts a provider."
+        ),
+    )
+    savings.add_argument("--sessions", dest="sessions", type=Path, nargs="*", default=None)
+    savings.add_argument("--data-dir", type=Path, default=None)
+    savings.add_argument("--output", type=Path, default=None)
+    savings.add_argument("--format", choices=["text", "json"], default="text")
+    savings.set_defaults(handler=_savings)
 
     purge = subcommands.add_parser(
         "purge",
@@ -1032,6 +1050,20 @@ def _runtime_status(args: argparse.Namespace) -> int:
             f"  damaged ledgers: {damaged} (unreadable schema; "
             "remove with `laconic purge --older-than <duration>`)"
         )
+    # Read the last written band rather than recomputing one. Producing an
+    # estimate joins every session transcript against the ledgers and takes
+    # tens of seconds; `status` earns its keep by answering immediately.
+    # Stale-but-dated beats absent, and beats a fast command made slow.
+    estimate = read_cached_estimate(DEFAULT_OUTPUT_DIR / REPORT_JSON)
+    if estimate is None:
+        print("  modelled cost avoided: not estimated yet — run `laconic savings`")
+    else:
+        print(
+            f"  modelled cost avoided: ${estimate.low_usd:,.2f} to "
+            f"${estimate.high_usd:,.2f} ({estimate.low_pct:.2f}% to "
+            f"{estimate.high_pct:.2f}%), estimated {estimate.age_text}"
+        )
+        print("    modelled, not measured; rerun with `laconic savings`")
     return EXIT_OK
 
 
@@ -1898,6 +1930,31 @@ def _print_spend_summary(written: WrittenReport) -> None:
     if payload["unknown_usage_keys"]:
         print(f"  unmodelled host usage keys: {', '.join(payload['unknown_usage_keys'])}")
     print(f"\n  wrote {written.json_path}\n  wrote {written.markdown_path}")
+
+
+def _savings(args: argparse.Namespace) -> int:
+    """Compute and write a fresh report, then lead with the band."""
+    exit_code = _spend_report(args)
+    if exit_code != EXIT_OK or args.format == "json":
+        return exit_code
+    output = args.output if args.output is not None else DEFAULT_OUTPUT_DIR
+    estimate = read_cached_estimate(output / REPORT_JSON)
+    print()
+    if estimate is None:
+        print("Modelled cost avoided")
+        print("  Not estimated: this corpus has no removed characters, or no")
+        print("  cached tokens to price them against. That is not a zero.")
+        return exit_code
+    print("Modelled cost avoided")
+    print(
+        f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}  "
+        f"({estimate.low_pct:.2f}% to {estimate.high_pct:.2f}%)"
+    )
+    print(f"  against a modelled ${estimate.denominator_usd:,.2f} for the same sessions")
+    print("  A model, not a measurement: no session ran without the codec, so")
+    print("  this is what the removed characters would have cost, not a saving")
+    print("  anyone observed. Every assumption is listed in the written report.")
+    return exit_code
 
 
 def _spend_report(args: argparse.Namespace) -> int:
