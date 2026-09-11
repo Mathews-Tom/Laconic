@@ -128,3 +128,21 @@ def test_status_survives_a_corrupt_cache_and_still_reports(
     assert exit_code == 0
     assert "Laconic runtime status" in output
     assert "not estimated yet" in output
+
+
+def test_a_fresh_band_is_not_marked_stale(tmp_path: Path) -> None:
+    """A rerun hint next to a just-computed figure reads as a failed command.
+
+    The owner ran `laconic savings`, then `laconic status`, and still saw
+    "rerun with `laconic savings`" — which looks like the command had no
+    effect. The hint must be conditional on the figure actually being old.
+    """
+    report = _report(tmp_path / "report.json", {"estimate": _ESTIMATE})
+    modified = report.stat().st_mtime
+
+    fresh = read_cached_estimate(report, now=modified + 60)
+    old = read_cached_estimate(report, now=modified + 7200)
+
+    assert fresh is not None and old is not None
+    assert fresh.is_stale is False
+    assert old.is_stale is True

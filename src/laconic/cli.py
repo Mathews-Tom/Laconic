@@ -1055,15 +1055,27 @@ def _runtime_status(args: argparse.Namespace) -> int:
     # tens of seconds; `status` earns its keep by answering immediately.
     # Stale-but-dated beats absent, and beats a fast command made slow.
     estimate = read_cached_estimate(DEFAULT_OUTPUT_DIR / REPORT_JSON)
+    # Set off by a blank line and its own heading. Buried as one more
+    # indented counter it reads as another diagnostic, which is the one
+    # thing this number is not: it is the only line here a non-operator
+    # cares about.
+    print()
+    print("Modelled cost avoided (a model, not a measurement)")
     if estimate is None:
-        print("  modelled cost avoided: not estimated yet — run `laconic savings`")
+        print("  not estimated yet — run `laconic savings`")
+        return EXIT_OK
+    print(f"  ${estimate.low_usd:,.2f} to ${estimate.high_usd:,.2f}")
+    print(
+        f"  {estimate.low_pct:.2f}% to {estimate.high_pct:.2f}% of a modelled "
+        f"${estimate.denominator_usd:,.2f} for the same sessions"
+    )
+    # Only suggest rerunning when rerunning would change something.
+    # Printing the hint next to a figure computed seconds ago makes the
+    # command look as though it did not take effect.
+    if estimate.is_stale:
+        print(f"  estimated {estimate.age_text} — rerun with `laconic savings`")
     else:
-        print(
-            f"  modelled cost avoided: ${estimate.low_usd:,.2f} to "
-            f"${estimate.high_usd:,.2f} ({estimate.low_pct:.2f}% to "
-            f"{estimate.high_pct:.2f}%), estimated {estimate.age_text}"
-        )
-        print("    modelled, not measured; rerun with `laconic savings`")
+        print(f"  estimated {estimate.age_text}")
     return EXIT_OK
 
 
