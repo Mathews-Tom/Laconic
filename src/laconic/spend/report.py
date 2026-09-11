@@ -477,7 +477,7 @@ def _split_lines(title: str, cost: dict[str, float], shares: dict[str, float] | 
     return lines
 
 
-def _estimate_lines(estimate: dict[str, Any] | None) -> list[str]:
+def _estimate_lines(estimate: dict[str, Any] | None, host_cost: float) -> list[str]:
     """Render the avoided-cost band, or say plainly why there is none."""
     if estimate is None:
         return [
@@ -524,11 +524,21 @@ def _estimate_lines(estimate: dict[str, Any] | None) -> list[str]:
         "this corpus's single modelled cache-write rate. A provider's minimum "
         "cacheable size and its separate cache lifetimes are not modelled.",
         "- Measured: the per-token cache-write and cache-read prices are divided "
-        "out of this corpus's own cost and tokens, not taken from a price table.",
+        "out of this corpus's own cost and tokens, not taken from a price table. "
+        "That makes the rates a blend of whatever models this corpus actually "
+        "used, weighted by how much each was used.",
+        "- Inherited: those per-token costs come from `laconic.costs`, which prices "
+        "a model from a published list price and falls back to Sonnet rates for "
+        "any model it does not know. A corpus with unpriced models (listed below, "
+        "when present) carries that error into both the estimate and its "
+        "denominator, so the *share* is more robust than the dollar figure.",
         "",
         "The denominator is the modelled cost of the same sessions, so both sides "
         "of the percentage come from one pricing model. Comparing a modelled "
-        "saving against a host-reported bill would mix two.",
+        "saving against a host-reported bill would mix two, and the two do not "
+        "agree: this corpus's host-reported total for the same sessions is "
+        f"{_usd(host_cost)}, against the modelled "
+        f"{_usd(estimate['denominator_usd'])}. Read the share, not the dollars.",
         "",
     ]
 
@@ -601,7 +611,7 @@ def render_markdown(report: SpendReport) -> str:
         "Counted over every session with a runtime ledger, including any that "
         "recorded no billable turn.",
     ]
-    lines += _estimate_lines(payload["estimate"])
+    lines += _estimate_lines(payload["estimate"], payload["matched_host_cost_usd"])
     if payload["unpriced_models"]:
         lines += [
             "## Models with no published list price",

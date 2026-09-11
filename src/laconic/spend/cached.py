@@ -18,7 +18,13 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+
+#: How old a band may be before the caller suggests recomputing it. An hour
+#: is long enough that a session's worth of new decisions has probably
+#: landed, and short enough that a figure quoted from it is still about
+#: today's corpus.
+STALE_AFTER_SECONDS: Final = 3600.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +37,16 @@ class CachedEstimate:
     high_pct: float
     denominator_usd: float
     age_seconds: float
+
+    @property
+    def is_stale(self) -> bool:
+        """Whether the figure is old enough that rerunning would change it.
+
+        A freshly computed band does not need a "rerun" hint attached to
+        it: printing one unconditionally makes the command look as though
+        it had no effect, which is exactly the confusion it should remove.
+        """
+        return self.age_seconds >= STALE_AFTER_SECONDS
 
     @property
     def age_text(self) -> str:

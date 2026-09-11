@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- `laconic status` now prints the modelled cost band as its own headed block rather than as one more indented counter. It was the only line a non-operator cares about and it read as another diagnostic.
+- The rerun hint is now conditional on the figure actually being stale (one hour). Printing "rerun with `laconic savings`" next to a band computed seconds earlier made the command look as though it had not taken effect.
+- The spend report now states what the estimate's per-token prices are inherited from: `laconic.costs` prices a model from a published list price and falls back to Sonnet rates for anything it does not know, so a corpus with unpriced models carries that error into both the estimate and its denominator. It also prints the host-reported total for the same sessions beside the modelled one and says which to read — on the development corpus those differ by 25% in the matched sessions, which makes the share more robust than the dollar figure.
+
 ## [0.11.0] — 2026-09-12
 
 ### Added
