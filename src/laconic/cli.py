@@ -61,7 +61,12 @@ from laconic.observe.installer import (
     preview_claude_code,
     preview_omp,
 )
-from laconic.observe.preview import InstallPlan
+from laconic.observe.preview import (
+    CODEC_OWNER,
+    OBSERVE_OWNER,
+    ClaudeCodeOwner,
+    InstallPlan,
+)
 from laconic.observe.status import compute_report, compute_status
 from laconic.render.narrate import (
     NarrationConfig,
@@ -240,6 +245,26 @@ def build_parser() -> argparse.ArgumentParser:
     install_omp.add_argument("--format", choices=["text", "json"], default="text")
     install_omp.set_defaults(handler=_runtime_omp_install)
 
+    install_claude_code = install_subcommands.add_parser(
+        "claude-code",
+        help="install Laconic's transforming Claude Code codec hook",
+        description=(
+            "Preview or atomically install one Laconic-owned PostToolUse hook that "
+            "replaces Bash and Read results with a codec encoding. Every foreign "
+            "hook entry is preserved. This command never contacts a provider."
+        ),
+    )
+    install_claude_code.add_argument("--scope", choices=["project", "user"], default="user")
+    install_claude_code.add_argument(
+        "--python",
+        help="absolute interpreter the installed hook invokes (default: this interpreter)",
+    )
+    install_claude_code.add_argument(
+        "--dry-run", action="store_true", help="preview only; never write"
+    )
+    install_claude_code.add_argument("--format", choices=["text", "json"], default="text")
+    install_claude_code.set_defaults(handler=_claude_code_codec_install)
+
     uninstall = subcommands.add_parser(
         "uninstall",
         help="remove an owned runtime adapter without purging data",
@@ -263,6 +288,22 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall_omp.add_argument("--dry-run", action="store_true", help="preview only; never write")
     uninstall_omp.add_argument("--format", choices=["text", "json"], default="text")
     uninstall_omp.set_defaults(handler=_runtime_omp_uninstall)
+
+    uninstall_claude_code = uninstall_subcommands.add_parser(
+        "claude-code",
+        help="remove Laconic's transforming Claude Code codec hook",
+        description=(
+            "Preview or remove only Laconic's marked codec hook. Observe's "
+            "content-free receipt hooks and every foreign entry are left in place, "
+            "and runtime ledgers are never purged by uninstall."
+        ),
+    )
+    uninstall_claude_code.add_argument("--scope", choices=["project", "user"], default="user")
+    uninstall_claude_code.add_argument(
+        "--dry-run", action="store_true", help="preview only; never write"
+    )
+    uninstall_claude_code.add_argument("--format", choices=["text", "json"], default="text")
+    uninstall_claude_code.set_defaults(handler=_claude_code_codec_uninstall)
     status = subcommands.add_parser(
         "status",
         help="inspect OMP adapter and content-free runtime storage health",
@@ -1024,22 +1065,76 @@ def _setup_install_omp(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def _setup_install_claude_code(args: argparse.Namespace) -> dict[str, object]:
+#: argv tail the installed Claude Code codec hook invokes.
+CODEC_ENTRYPOINT_ARGS = ["-m", "laconic.runtime.claude_code"]
+
+
+def _claude_code_codec_install(args: argparse.Namespace) -> int:
     target = _claude_code_settings_path(args.scope)
+    try:
+        if args.dry_run:
+            plan = preview_claude_code(target, owner=CODEC_OWNER)
+            _print_plan(plan, args.format, applied=False)
+            return EXIT_OK
+        result = apply_claude_code_install(
+            target, python=args.python, owner=CODEC_OWNER, args=CODEC_ENTRYPOINT_ARGS
+        )
+    except ConfigParseError as error:
+        print(f"laconic install claude-code: {error}", file=sys.stderr)
+        return EXIT_OBSERVE_CONFIG_PARSE_ERROR
+    except OwnershipConflictError as error:
+        print(f"laconic install claude-code: {error}", file=sys.stderr)
+        return EXIT_OBSERVE_OWNERSHIP_CONFLICT
+    _print_plan(result.plan, args.format, applied=result.applied)
+    return EXIT_OK
+
+
+def _claude_code_codec_uninstall(args: argparse.Namespace) -> int:
+    target = _claude_code_settings_path(args.scope)
+    try:
+        if args.dry_run:
+            plan = preview_claude_code(target, remove=True, owner=CODEC_OWNER)
+            _print_plan(plan, args.format, applied=False)
+            return EXIT_OK
+        result = apply_claude_code_remove(target, owner=CODEC_OWNER)
+    except ConfigParseError as error:
+        print(f"laconic uninstall claude-code: {error}", file=sys.stderr)
+        return EXIT_OBSERVE_CONFIG_PARSE_ERROR
+    _print_plan(result.plan, args.format, applied=result.applied)
+    return EXIT_OK
+
+
+def _setup_install_claude_code(args: argparse.Namespace) -> list[dict[str, object]]:
+    """Install both Claude Code families: the codec and Observe's receipts.
+
+    They are separate owners of one settings file and are reported as
+    separate actions, so an operator can see which of the two changed.
+    """
+    return [
+        _setup_claude_code_family(args, owner=CODEC_OWNER, capability="codec"),
+        _setup_claude_code_family(args, owner=OBSERVE_OWNER, capability="observe"),
+    ]
+
+
+def _setup_claude_code_family(
+    args: argparse.Namespace, *, owner: ClaudeCodeOwner, capability: str
+) -> dict[str, object]:
+    target = _claude_code_settings_path(args.scope)
+    entry_args = CODEC_ENTRYPOINT_ARGS if owner is CODEC_OWNER else None
     if args.dry_run:
-        plan = preview_claude_code(target)
+        plan = preview_claude_code(target, owner=owner)
         return {
             "host": HOST_CLAUDE_CODE,
-            "capability": "observe",
+            "capability": capability,
             "operation": plan.mechanism.value,
             "path": str(target),
             "applied": False,
             "preview": True,
         }
-    result = apply_claude_code_install(target, python=args.python)
+    result = apply_claude_code_install(target, python=args.python, owner=owner, args=entry_args)
     return {
         "host": HOST_CLAUDE_CODE,
-        "capability": "observe",
+        "capability": capability,
         "operation": result.plan.mechanism.value,
         "path": str(target),
         "applied": result.applied,
@@ -1066,7 +1161,7 @@ def _setup(args: argparse.Namespace) -> int:
                     return EXIT_OMP_INSTALL_ERROR
             elif host.host == HOST_CLAUDE_CODE:
                 try:
-                    actions.append(_setup_install_claude_code(args))
+                    actions.extend(_setup_install_claude_code(args))
                 except ConfigParseError as error:
                     print(f"laconic setup: {error}", file=sys.stderr)
                     return EXIT_OBSERVE_CONFIG_PARSE_ERROR

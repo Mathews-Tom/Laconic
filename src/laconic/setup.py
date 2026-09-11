@@ -143,12 +143,11 @@ def detect_hosts(
         HostCapability(
             host=HOST_CLAUDE_CODE,
             detected=claude_code,
-            codec=False,
+            codec=True,
             observe=True,
             detail=(
-                "setup installs content-free receipt hooks only; the "
-                "transforming codec hook is a separate opt-in "
-                "(docs/claude-code-codec.md)"
+                "a transforming PostToolUse hook replaces Bash and Read results; "
+                "receipt hooks record content-free diagnostics alongside it"
                 if claude_code
                 else "not detected (no .claude directory in this project or your home)"
             ),

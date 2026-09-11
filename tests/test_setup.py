@@ -9,6 +9,7 @@ import pytest
 
 from laconic.cli import main
 from laconic.ledger import RuntimeDecisionOutcome
+from laconic.observe.preview import CLAUDE_CODE_OWNED_MARKER, CODEC_OWNED_MARKER
 from laconic.runtime.storage import RuntimeStorage
 from laconic.setup import (
     HOST_CLAUDE_CODE,
@@ -40,13 +41,15 @@ def _record(root: Path, session: str, *, outcome: RuntimeDecisionOutcome, reason
         )
 
 
-def test_claude_code_is_reported_as_observe_only_even_when_installed(tmp_path: Path) -> None:
-    """The claim a user is most likely to get wrong.
+def test_every_advertised_capability_has_an_adapter_setup_installs(tmp_path: Path) -> None:
+    """The table must describe what setup installs, not what it wishes.
 
-    Claude Code's hooks fire after a tool has already returned its full
-    result, so they cannot compress anything. A successful install there
-    still buys zero token reduction, and reporting `codec: yes` would be a
-    false savings claim dressed up as a capability.
+    Claude Code now reports ``codec: yes`` because a transforming
+    ``PostToolUse`` hook genuinely replaces tool results there. That claim
+    is only honest while setup actually installs it, so the capability
+    flags and the installable adapters are pinned together: a host that
+    advertises a capability must be actionable, and one that advertises
+    none must not be.
     """
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
@@ -56,9 +59,15 @@ def test_claude_code_is_reported_as_observe_only_even_when_installed(tmp_path: P
 
     claude_code = hosts[HOST_CLAUDE_CODE]
     assert claude_code.detected is True
-    assert claude_code.codec is False
+    assert claude_code.codec is True
     assert claude_code.observe is True
     assert hosts[HOST_OMP].codec is True
+    # Concrete, not a restatement of `actionable`'s own body: the two
+    # supported hosts must be things setup will act on, and the one with no
+    # adapter must not be.
+    assert claude_code.actionable is True
+    assert hosts[HOST_OMP].actionable is True
+    assert hosts[HOST_CODEX].actionable is False
 
 
 def test_an_unsupported_host_is_reported_rather_than_omitted(tmp_path: Path) -> None:
@@ -156,3 +165,61 @@ def test_setup_installs_the_codec_against_the_storage_root_it_verifies(
     assert installed, "the detected OMP host should have been installed"
     extension = Path(str(installed[0]["path"])).read_text(encoding="utf-8")
     assert str(storage) in extension
+
+
+def test_setup_installs_both_claude_code_families_independently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The codec hook and Observe's receipts are separate owners of one file.
+
+    They must install side by side and be removable one at a time, or
+    uninstalling diagnostics would silently disable compression. Removing
+    the codec must leave Observe's entries and every foreign entry intact.
+    """
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    settings = home / ".claude" / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        {"matcher": "*", "hooks": [{"type": "command", "command": "/bin/true"}]}
+                    ]
+                },
+                "someUserKey": "preserved",
+            }
+        ),
+        encoding="utf-8",
+    )
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.chdir(project)
+
+    assert main(["setup", "--data-dir", str(tmp_path / "storage"), "--format", "json"]) == 0
+    capsys.readouterr()
+
+    installed = json.loads(settings.read_text(encoding="utf-8"))
+    handlers = [
+        handler for group in installed["hooks"]["PostToolUse"] for handler in group.get("hooks", [])
+    ]
+    markers = {str(handler.get("statusMessage", "")) for handler in handlers}
+    assert CODEC_OWNED_MARKER in markers
+    assert CLAUDE_CODE_OWNED_MARKER in markers
+    assert any(handler.get("command") == "/bin/true" for handler in handlers)
+
+    assert main(["uninstall", "claude-code", "--scope", "user"]) == 0
+    capsys.readouterr()
+
+    remaining = json.loads(settings.read_text(encoding="utf-8"))
+    left = [
+        handler for group in remaining["hooks"]["PostToolUse"] for handler in group.get("hooks", [])
+    ]
+    left_markers = {str(handler.get("statusMessage", "")) for handler in left}
+    assert CODEC_OWNED_MARKER not in left_markers
+    assert CLAUDE_CODE_OWNED_MARKER in left_markers
+    assert any(handler.get("command") == "/bin/true" for handler in left)
+    assert remaining["someUserKey"] == "preserved"

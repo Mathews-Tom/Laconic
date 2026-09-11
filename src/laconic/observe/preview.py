@@ -29,6 +29,46 @@ _CLAUDE_CODE_EVENTS = ("PostToolUse", "PostToolUseFailure", "SessionEnd")
 
 
 @dataclass(frozen=True, slots=True)
+class ClaudeCodeOwner:
+    """Identity of one Laconic-owned hook family in Claude Code settings.
+
+    Two separate families now share the same settings file: Observe's
+    content-free receipt hooks and the runtime codec's transforming
+    ``PostToolUse`` hook. They must be detectable, installable, and
+    removable independently, which means everything that reasons about
+    ownership takes an owner rather than closing over one marker.
+
+    The settings-merge itself stays single-sourced: a second copy of it
+    would be a second place for the "preserve every foreign handler"
+    invariant to drift.
+    """
+
+    marker: str
+    events: tuple[str, ...]
+    label: str
+
+
+#: The default owner, preserving every pre-existing caller's behaviour.
+OBSERVE_OWNER = ClaudeCodeOwner(
+    marker=CLAUDE_CODE_OWNED_MARKER,
+    events=_CLAUDE_CODE_EVENTS,
+    label="Observe",
+)
+
+#: Substring embedded in the runtime codec's owned Claude Code hook.
+CODEC_OWNED_MARKER = "__laconic_codec__"
+
+#: The codec transforms successful tool results only. `PostToolUseFailure`
+#: is excluded deliberately: replacing an error message risks the model
+#: proceeding on a false assumption.
+CODEC_OWNER = ClaudeCodeOwner(
+    marker=CODEC_OWNED_MARKER,
+    events=("PostToolUse",),
+    label="codec",
+)
+
+
+@dataclass(frozen=True, slots=True)
 class PlanAction:
     """One computed change (or explicit non-change) in a plan."""
 
@@ -49,32 +89,36 @@ class InstallPlan:
     preserved: tuple[str, ...]
 
 
-def _is_owned_handler(handler: dict[str, Any]) -> bool:
+def _is_owned_handler(handler: dict[str, Any], owner: ClaudeCodeOwner = OBSERVE_OWNER) -> bool:
     """A handler is Observe-owned if the marker appears in its `command`
     (M1's original fixture shape, kept for backward compatibility) or its
     `statusMessage` (M3's real installed shape -- the marker cannot live
     inside `command`/`args` without corrupting the entrypoint's own
     argument parsing; see H-50)."""
-    return CLAUDE_CODE_OWNED_MARKER in str(
-        handler.get("command", "")
-    ) or CLAUDE_CODE_OWNED_MARKER in str(handler.get("statusMessage", ""))
+    return owner.marker in str(handler.get("command", "")) or owner.marker in str(
+        handler.get("statusMessage", "")
+    )
 
 
-def _claude_code_owned_handlers(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _claude_code_owned_handlers(
+    groups: list[dict[str, Any]], owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> list[dict[str, Any]]:
     return [
         handler
         for group in groups
         for handler in group.get("hooks", [])
-        if _is_owned_handler(handler)
+        if _is_owned_handler(handler, owner)
     ]
 
 
-def _claude_code_foreign_handlers(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _claude_code_foreign_handlers(
+    groups: list[dict[str, Any]], owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> list[dict[str, Any]]:
     return [
         handler
         for group in groups
         for handler in group.get("hooks", [])
-        if not _is_owned_handler(handler)
+        if not _is_owned_handler(handler, owner)
     ]
 
 
@@ -84,14 +128,18 @@ def _claude_code_foreign_handlers(groups: list[dict[str, Any]]) -> list[dict[str
 CLAUDE_CODE_EVENTS = _CLAUDE_CODE_EVENTS
 
 
-def claude_code_event_is_owned(existing_settings: dict[str, Any], event: str) -> bool:
+def claude_code_event_is_owned(
+    existing_settings: dict[str, Any], event: str, owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> bool:
     """Return whether ``event`` already carries an Observe-owned handler
     in ``existing_settings``."""
     groups = existing_settings.get("hooks", {}).get(event, [])
-    return bool(_claude_code_owned_handlers(groups))
+    return bool(_claude_code_owned_handlers(groups, owner))
 
 
-def preview_claude_code_install(existing_settings: dict[str, Any]) -> InstallPlan:
+def preview_claude_code_install(
+    existing_settings: dict[str, Any], owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> InstallPlan:
     """Preview adding Observe's three hook entries to a synthetic Claude
     Code settings document. Idempotent: an event that already carries an
     owned entry previews as a no-op, not a duplicate add."""
@@ -99,13 +147,13 @@ def preview_claude_code_install(existing_settings: dict[str, Any]) -> InstallPla
     actions: list[PlanAction] = []
     preserved: list[str] = []
 
-    for event in _CLAUDE_CODE_EVENTS:
+    for event in owner.events:
         groups = hooks.get(event, [])
-        if _claude_code_owned_handlers(groups):
-            actions.append(PlanAction("noop", f"{event}: Observe entry already present"))
+        if _claude_code_owned_handlers(groups, owner):
+            actions.append(PlanAction("noop", f"{event}: {owner.label} entry already present"))
         else:
-            actions.append(PlanAction("add", f"{event}: add one Observe-owned command hook"))
-        for handler in _claude_code_foreign_handlers(groups):
+            actions.append(PlanAction("add", f"{event}: add one {owner.label}-owned command hook"))
+        for handler in _claude_code_foreign_handlers(groups, owner):
             preserved.append(f"{event}: preserved existing handler {handler.get('command')!r}")
 
     for key in existing_settings:
@@ -120,18 +168,22 @@ def preview_claude_code_install(existing_settings: dict[str, Any]) -> InstallPla
     )
 
 
-def preview_claude_code_remove(existing_settings: dict[str, Any]) -> InstallPlan:
+def preview_claude_code_remove(
+    existing_settings: dict[str, Any], owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> InstallPlan:
     """Preview removing only Observe-owned entries from a synthetic Claude
     Code settings document."""
     hooks = existing_settings.get("hooks", {})
     actions: list[PlanAction] = []
     preserved: list[str] = []
 
-    for event in _CLAUDE_CODE_EVENTS:
+    for event in owner.events:
         groups = hooks.get(event, [])
-        if _claude_code_owned_handlers(groups):
-            actions.append(PlanAction("remove", f"{event}: remove Observe-owned command hook(s)"))
-        for handler in _claude_code_foreign_handlers(groups):
+        if _claude_code_owned_handlers(groups, owner):
+            actions.append(
+                PlanAction("remove", f"{event}: remove {owner.label}-owned command hook(s)")
+            )
+        for handler in _claude_code_foreign_handlers(groups, owner):
             preserved.append(f"{event}: preserved existing handler {handler.get('command')!r}")
 
     for key in existing_settings:
@@ -139,7 +191,7 @@ def preview_claude_code_remove(existing_settings: dict[str, Any]) -> InstallPlan
             preserved.append(f"top-level key {key!r} left untouched")
 
     if not actions:
-        actions.append(PlanAction("noop", "no Observe-owned entries found"))
+        actions.append(PlanAction("noop", f"no {owner.label}-owned entries found"))
 
     return InstallPlan(
         client=ClientId.CLAUDE_CODE,
