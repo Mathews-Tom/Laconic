@@ -1,31 +1,45 @@
 """Search observation encoder: path interning and tabular output.
 
-A search-shaped tool result (``Grep``, ``Glob``) is a list of matches, most
-of them naming one of a small set of paths repeatedly — a file with five
-matches repeats its own path five times in the raw text. This encoder
-interns each distinct path once into a short local reference (``p0``,
-``p1``, ...) and renders every match as a compact ``pN[:line]  text`` row
-against that legend, instead of repeating the full path on every line.
+A search-shaped tool result (``Grep``, ``Glob``) is a list of matches. A
+grep result usually names one of a small set of paths repeatedly — a file
+with five matches repeats its own path five times — while a glob result
+is a list of distinct paths, each appearing exactly once. This encoder
+interns a path into a short local reference (``p0``, ``p1``, ...) **only
+when it appears more than once**, rendering those matches as compact
+``pN[:line]  text`` rows against a legend and leaving a single-hit path
+verbatim on its row.
+
+Interning a path seen once is strictly counterproductive: the legend pays
+the path's full text *and* the row still pays a ``pN`` reference, so the
+encoding grows past its input. Interning unconditionally reproduced every
+glob result's entire payload in its legend, which is why glob results
+encoded to roughly 1.4x their raw size and were passed through
+uncompressed.
+
+The threshold is occurrence count alone, not a per-path cost model. At
+exactly two occurrences interning is roughly break-even and turns
+profitable around an eight-character path, so a very short path seen
+twice is interned at a slight loss. That is deliberate: the runtime's
+strictly-smaller rule passes any net-inflating encoding through anyway,
+and the simple threshold is never worse than interning unconditionally.
 
 Like :class:`~laconic.codec.encoders.command.CommandEncoder`, this encoder
-elides the middle of a long match list: the head and tail rows are kept
-verbatim and the span between them is replaced by one count line. Path
-interning alone does not reliably shrink a match list: it recovers the
-repeated path bytes but pays for a legend, so it only wins when a few
-paths each repeat many times. A typical result is dominated by paths
-that appear once or twice, where the legend costs more than the
-repetition saves — measured across the local dogfood ledgers, un-elided
-encodings averaged slightly *larger* than their input and the runtime's
-strictly-smaller rule passed almost all of them through. Elision is what
+also elides the middle of a long match list: the head and tail rows are
+kept verbatim and the span between them is replaced by one count line.
+Interning alone shrinks only the repeated-path bytes, so elision is what
 makes a long match list compressible in the common case.
 
 The head and tail widths are the codec's shared ``keep_head``/``keep_tail``
 rather than search-specific values: a match list is long enough that the
 same widths the command encoder uses already leave most results untouched
-and still elide the long tail. The legend lists every matched path
-regardless of how many rows are elided, so eliding never hides *which*
-files matched, and the header's hit count still reports how many matches
-exist. The three elision rules in ``docs/system-design.md`` §2.2 are
+and still elide the long tail. The legend names every *repeated* path
+regardless of how many of its rows are elided, so a file the result keeps
+returning to is never hidden. A single-hit path lives only on its own
+row, so eliding that row does drop it from the visible text — the
+header's hit and file counts still report that it existed, and the full
+list is exactly recoverable through the ledger handle, which is the same
+bargain the file and command encoders already make for elided content.
+The three elision rules in ``docs/system-design.md`` §2.2 are
 satisfied the same way the command encoder satisfies them: head and tail
 survive verbatim, error-shaped lines in the elided middle are surfaced
 explicitly, and the full text remains exactly recoverable through the
@@ -45,6 +59,7 @@ the path itself, not treated as the field delimiter, so
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -110,24 +125,27 @@ def _parse_entry(line: str) -> _Entry:
 def _render(
     subject: str,
     entries: list[_Entry],
-    paths: dict[str, int],
+    file_count: int,
+    interned: dict[str, int],
     *,
     keep_head: int,
     keep_tail: int,
     max_errors: int,
 ) -> str:
     hit_count = sum(1 for entry in entries if entry.path is not None)
-    parts = [f"{subject}  {hit_count} hits, {len(paths)} files"]
-    if paths:
-        legend = " ".join(f"p{index}={path}" for path, index in paths.items())
+    parts = [f"{subject}  {hit_count} hits, {file_count} files"]
+    if interned:
+        legend = " ".join(f"p{index}={path}" for path, index in interned.items())
         parts.append(f"  paths: {legend}")
     rows = []
     for entry in entries:
         if entry.path is None:
             rows.append(entry.line)
             continue
-        index = paths[entry.path]
-        ref = f"p{index}:{entry.line_no}" if entry.line_no is not None else f"p{index}"
+        index = interned.get(entry.path)
+        ref = entry.path if index is None else f"p{index}"
+        if entry.line_no is not None:
+            ref = f"{ref}:{entry.line_no}"
         rows.append(f"  {ref}  {entry.text}" if entry.text else f"  {ref}")
     elided = elide_middle(rows, keep_head=keep_head, keep_tail=keep_tail, max_errors=max_errors)
     parts.append(elided.text)
@@ -166,14 +184,20 @@ class SearchEncoder:
     ) -> Record:
         del request  # no request-carried hints are defined for search results
         entries = [_parse_entry(line) for line in raw.split("\n")]
-        paths: dict[str, int] = {}
+        occurrences: Counter[str] = Counter(
+            entry.path for entry in entries if entry.path is not None
+        )
+        interned: dict[str, int] = {}
         for entry in entries:
-            if entry.path is not None and entry.path not in paths:
-                paths[entry.path] = len(paths)
+            if entry.path is None or entry.path in interned:
+                continue
+            if occurrences[entry.path] > 1:
+                interned[entry.path] = len(interned)
         encoded = _render(
             subject,
             entries,
-            paths,
+            len(occurrences),
+            interned,
             keep_head=self._keep_head,
             keep_tail=self._keep_tail,
             max_errors=self._max_errors,

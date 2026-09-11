@@ -601,27 +601,33 @@ def test_negative_control_k1_an_expensive_induced_read_can_erase_savings_into_a_
     assert result.value is not None and result.value < 0.0
 
 
-def test_negative_control_k4_a_pathological_search_result_can_reach_the_kill_threshold(
+def test_negative_control_k4_a_pathological_search_query_can_reach_the_kill_threshold(
     tmp_path: Path,
 ) -> None:
-    """1,400 short, unique, once-each paths: elision drops the hit rows,
-    but `SearchEncoder`'s legend must still name every matched file, so
-    the legend outlives the elision and costs more than the raw hit list
-    -- the Caveman net-negative trap taken to a scale that clears K4's
-    500-token kill threshold, not just a nonzero overhead. The overhead
-    scales with the *number* of distinct paths, not their length:
-    interning removes each path from its row and writes it to the legend
-    once, so a longer path cancels out exactly."""
-    tiny_hits = "\n".join(f"p{i}/f{i}.py: ok" for i in range(1400))
+    """`SearchEncoder` echoes the search subject verbatim into its header,
+    and elision never touches the header, so a very long pattern is added
+    to the transcript in full on top of the rows it summarizes. That is
+    the codec's one remaining unbounded overhead term, and it is what this
+    control uses to drive K4 past its 500-token kill threshold rather than
+    to a merely nonzero overhead.
+
+    This control previously used 1,400 once-each paths, whose overhead came
+    from the legend naming every distinct path. That is no longer a hazard:
+    a path seen once is left verbatim instead of interned, so a list of
+    distinct paths cannot be inflated by a legend and that fixture now
+    compresses by ~5,700 tokens instead of inflating.
+    """
+    pattern = "z" * 4000
+    hits = "\n".join(f"p{i}/f{i}.py: ok" for i in range(79))
     _write(
         tmp_path / "s.jsonl",
         [
-            _assistant(tool_name="Grep", tool_input={"pattern": "x"}, tool_use_id="t1"),
+            _assistant(tool_name="Grep", tool_input={"pattern": pattern}, tool_use_id="t1"),
             {
                 "type": "user",
                 "message": {
                     "role": "user",
-                    "content": [{"type": "tool_result", "tool_use_id": "t1", "content": tiny_hits}],
+                    "content": [{"type": "tool_result", "tool_use_id": "t1", "content": hits}],
                 },
             },
         ],

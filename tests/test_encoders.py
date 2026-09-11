@@ -934,15 +934,39 @@ def test_search_encoder_encoding_is_recoverable_via_the_ledger() -> None:
         assert ledger.expand(record.handle) == raw
 
 
-def test_search_encoder_interns_a_repeated_path_once() -> None:
+def test_search_encoder_interns_a_repeated_path_but_not_a_single_hit_path() -> None:
+    """Interning pays for itself only when a path repeats.
+
+    A path seen once costs its full text in the legend *and* a ``pN``
+    reference on its row, so interning it is strictly larger than leaving
+    it verbatim. A result made entirely of once-each paths -- every glob
+    result -- would otherwise have its whole payload duplicated into a
+    legend.
+    """
     with memory_ledger() as ledger:
         raw = "src/a.py:1:first match\nsrc/a.py:5:second match\nsrc/b.py:1:third match"
         record = SearchEncoder(ledger).encode("pattern", raw, {}, turn=0)
         assert record.encoded.count("p0=src/a.py") == 1
-        assert record.encoded.count("p1=src/b.py") == 1
         assert "p0:1" in record.encoded
         assert "p0:5" in record.encoded
-        assert "p1:1" in record.encoded
+        legend = next(
+            line for line in record.encoded.split("\n") if line.strip().startswith("paths:")
+        )
+        assert "src/b.py" not in legend
+        assert "src/b.py:1  third match" in record.encoded
+
+
+def test_search_encoder_does_not_inflate_a_list_of_once_each_paths() -> None:
+    """A glob result is the worst case for interning: every path is
+    distinct, so a legend naming each one reproduces the entire payload
+    and the encoding grows past its input. Encoding must not be larger
+    than raw here -- with a legend it was roughly 1.4x.
+    """
+    raw = "\n".join(f"src/pkg/module_{index}.py" for index in range(200))
+    with memory_ledger() as ledger:
+        record = SearchEncoder(ledger).encode("**/*.py", raw, {}, turn=0)
+        assert len(record.encoded) < len(raw)
+        assert ledger.expand(record.handle) == raw
 
 
 def test_search_encoder_reports_hit_and_file_counts() -> None:
@@ -957,8 +981,8 @@ def test_search_encoder_handles_a_path_message_shape_with_no_line_number() -> No
         raw = "encoder/adapter_0.py: ok\ncache/registry_1.py: ok"
         record = SearchEncoder(ledger).encode("pattern", raw, {}, turn=0)
         assert "2 hits, 2 files" in record.encoded
-        assert "p0  ok" in record.encoded
-        assert "p1  ok" in record.encoded
+        assert "encoder/adapter_0.py  ok" in record.encoded
+        assert "cache/registry_1.py  ok" in record.encoded
 
 
 def test_search_encoder_preserves_an_unparseable_line_verbatim() -> None:
@@ -1023,7 +1047,9 @@ def test_search_encoder_interns_the_whole_windows_drive_path_not_just_the_letter
         record = SearchEncoder(ledger).encode("handler", raw, {}, turn=0)
         assert "3 hits, 2 files" in record.encoded
         assert "p0=C:\\src\\app.py" in record.encoded
-        assert "p1=D:\\lib\\util.py" in record.encoded
+        # Interned once (two hits) versus left verbatim (one hit): either way
+        # the whole drive-qualified path survives, not just the drive letter.
+        assert "D:\\lib\\util.py:7" in record.encoded
 
 
 def test_search_encoder_does_not_intern_a_ripgrep_diagnostic_as_a_path() -> None:
@@ -1055,8 +1081,11 @@ def test_search_encoder_counts_a_bare_glob_path_as_a_hit() -> None:
     with memory_ledger() as ledger:
         record = SearchEncoder(ledger).encode("**/*.py", raw, {}, turn=0)
         assert "3 hits, 3 files" in record.encoded
-        assert "p0=/proj/src/a.py" in record.encoded
-        assert "p2=/proj/tests/c.py" in record.encoded
+        # A glob result is a list of distinct paths, so nothing is interned:
+        # a legend naming every path once would duplicate the whole payload.
+        assert "paths:" not in record.encoded
+        assert "/proj/src/a.py" in record.encoded
+        assert "/proj/tests/c.py" in record.encoded
 
 
 @PROPERTY
