@@ -49,10 +49,23 @@ To install a single adapter by hand instead, use `laconic install omp` or `lacon
 ## Modelled cost avoided
 
 ```bash
-laconic research spend report
+laconic savings
 ```
 
-Writes a local, content-free composition of where your model spend went, alongside a **modelled** estimate of what the codec's removed characters would otherwise have cost. Both hosts are scanned.
+It prints the spend composition, writes both artifacts, and closes with the band:
+
+```text
+Modelled cost avoided
+  $54.24 to $124.56  (3.56% to 8.18%)
+  against a modelled $1,522.64 for the same sessions
+  A model, not a measurement: no session ran without the codec, so
+  this is what the removed characters would have cost, not a saving
+  anyone observed. Every assumption is listed in the written report.
+```
+
+Scans this machine's own sessions across both hosts and writes a local, content-free composition of where your model spend went, alongside a **modelled** estimate of what the codec's removed characters would otherwise have cost.
+
+`laconic status` shows the last band and how old it is. It does not recompute one: producing an estimate joins every session transcript against the runtime ledgers and takes tens of seconds, and `status` earns its keep by answering immediately.
 
 The estimate is a band, not a figure, and it is labelled `modelled_not_measured` everywhere it appears. Every session Laconic has ever recorded ran with the codec **on**, so no counterfactual exists and **nothing here is a measured saving**.
 
