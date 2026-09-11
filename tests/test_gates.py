@@ -604,11 +604,15 @@ def test_negative_control_k1_an_expensive_induced_read_can_erase_savings_into_a_
 def test_negative_control_k4_a_pathological_search_result_can_reach_the_kill_threshold(
     tmp_path: Path,
 ) -> None:
-    """400 short, unique, once-each paths: `SearchEncoder`'s legend costs
-    far more than the raw hit list -- the Caveman net-negative trap taken
-    to a scale that clears K4's 500-token kill threshold, not just a
-    nonzero overhead."""
-    tiny_hits = "\n".join(f"p{i}/f{i}.py: ok" for i in range(400))
+    """1,400 short, unique, once-each paths: elision drops the hit rows,
+    but `SearchEncoder`'s legend must still name every matched file, so
+    the legend outlives the elision and costs more than the raw hit list
+    -- the Caveman net-negative trap taken to a scale that clears K4's
+    500-token kill threshold, not just a nonzero overhead. The overhead
+    scales with the *number* of distinct paths, not their length:
+    interning removes each path from its row and writes it to the legend
+    once, so a longer path cancels out exactly."""
+    tiny_hits = "\n".join(f"p{i}/f{i}.py: ok" for i in range(1400))
     _write(
         tmp_path / "s.jsonl",
         [

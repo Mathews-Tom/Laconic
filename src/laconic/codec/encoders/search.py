@@ -7,14 +7,29 @@ interns each distinct path once into a short local reference (``p0``,
 ``p1``, ...) and renders every match as a compact ``pN[:line]  text`` row
 against that legend, instead of repeating the full path on every line.
 
-Unlike :class:`~laconic.codec.encoders.command.CommandEncoder`, this
-encoder never elides: every input line becomes exactly one output line,
-either a table row (for a line this module can parse as a path, optionally
-with a line number and message) or the original line verbatim (for
-anything it cannot — a header, a "no matches" message, or any shape this
-build does not recognize). Nothing is dropped, so the three elision rules
-in ``docs/system-design.md`` §2.2 are satisfied vacuously: there is no
-elision here to violate them.
+Like :class:`~laconic.codec.encoders.command.CommandEncoder`, this encoder
+elides the middle of a long match list: the head and tail rows are kept
+verbatim and the span between them is replaced by one count line. Path
+interning alone does not reliably shrink a match list: it recovers the
+repeated path bytes but pays for a legend, so it only wins when a few
+paths each repeat many times. A typical result is dominated by paths
+that appear once or twice, where the legend costs more than the
+repetition saves — measured across the local dogfood ledgers, un-elided
+encodings averaged slightly *larger* than their input and the runtime's
+strictly-smaller rule passed almost all of them through. Elision is what
+makes a long match list compressible in the common case.
+
+The head and tail widths are the codec's shared ``keep_head``/``keep_tail``
+rather than search-specific values: a match list is long enough that the
+same widths the command encoder uses already leave most results untouched
+and still elide the long tail. The legend lists every matched path
+regardless of how many rows are elided, so eliding never hides *which*
+files matched, and the header's hit count still reports how many matches
+exist. The three elision rules in ``docs/system-design.md`` §2.2 are
+satisfied the same way the command encoder satisfies them: head and tail
+survive verbatim, error-shaped lines in the elided middle are surfaced
+explicitly, and the full text remains exactly recoverable through the
+ledger handle.
 
 A candidate path is only interned when it *looks like* a path: no
 whitespace, and either a ``/``/``\\`` separator or a dotted extension. A
@@ -33,6 +48,12 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from laconic.codec.encoders._elision import (
+    DEFAULT_KEEP_HEAD,
+    DEFAULT_KEEP_TAIL,
+    DEFAULT_MAX_ERRORS,
+    elide_middle,
+)
 from laconic.ledger import Ledger, ObservationKind, Record
 
 #: See ``laconic.codec.encoders.file._LONE_SURROGATE``: a lone UTF-16
@@ -86,19 +107,30 @@ def _parse_entry(line: str) -> _Entry:
     return _Entry(line, None, None, None)
 
 
-def _render(subject: str, entries: list[_Entry], paths: dict[str, int]) -> str:
+def _render(
+    subject: str,
+    entries: list[_Entry],
+    paths: dict[str, int],
+    *,
+    keep_head: int,
+    keep_tail: int,
+    max_errors: int,
+) -> str:
     hit_count = sum(1 for entry in entries if entry.path is not None)
     parts = [f"{subject}  {hit_count} hits, {len(paths)} files"]
     if paths:
         legend = " ".join(f"p{index}={path}" for path, index in paths.items())
         parts.append(f"  paths: {legend}")
+    rows = []
     for entry in entries:
         if entry.path is None:
-            parts.append(entry.line)
+            rows.append(entry.line)
             continue
         index = paths[entry.path]
         ref = f"p{index}:{entry.line_no}" if entry.line_no is not None else f"p{index}"
-        parts.append(f"  {ref}  {entry.text}" if entry.text else f"  {ref}")
+        rows.append(f"  {ref}  {entry.text}" if entry.text else f"  {ref}")
+    elided = elide_middle(rows, keep_head=keep_head, keep_tail=keep_tail, max_errors=max_errors)
+    parts.append(elided.text)
     return "\n".join(parts)
 
 
@@ -111,8 +143,18 @@ class SearchEncoder:
     regardless of ``raw``'s content.
     """
 
-    def __init__(self, ledger: Ledger) -> None:
+    def __init__(
+        self,
+        ledger: Ledger,
+        *,
+        keep_head: int = DEFAULT_KEEP_HEAD,
+        keep_tail: int = DEFAULT_KEEP_TAIL,
+        max_errors: int = DEFAULT_MAX_ERRORS,
+    ) -> None:
         self._ledger = ledger
+        self._keep_head = keep_head
+        self._keep_tail = keep_tail
+        self._max_errors = max_errors
 
     def encode(
         self,
@@ -128,7 +170,14 @@ class SearchEncoder:
         for entry in entries:
             if entry.path is not None and entry.path not in paths:
                 paths[entry.path] = len(paths)
-        encoded = _render(subject, entries, paths)
+        encoded = _render(
+            subject,
+            entries,
+            paths,
+            keep_head=self._keep_head,
+            keep_tail=self._keep_tail,
+            max_errors=self._max_errors,
+        )
         return self._ledger.register(
             ObservationKind.SEARCH, _storable(subject), raw, _storable(encoded), turn
         )

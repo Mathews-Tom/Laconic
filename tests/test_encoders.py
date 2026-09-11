@@ -975,6 +975,36 @@ def test_search_encoder_handles_empty_content_without_raising() -> None:
         assert ledger.expand(record.handle) == ""
 
 
+def test_search_encoder_makes_a_long_match_list_strictly_smaller_than_its_input() -> None:
+    """The property the runtime's strictly-smaller rule actually gates on.
+
+    Path interning alone cannot deliver it: interning recovers only the
+    repeated path bytes while adding a legend, so an un-elided encoding
+    of a long match list is reliably *larger* than its input and every
+    search result is passed through uncompressed.
+    """
+    raw = "\n".join(
+        f"src/pkg/module_{index}.py:{index}:    return handler(value)" for index in range(400)
+    )
+    with memory_ledger() as ledger:
+        record = SearchEncoder(ledger).encode("pattern", raw, {}, turn=0)
+        assert len(record.encoded) < len(raw)
+        assert ledger.expand(record.handle) == raw
+
+
+def test_search_encoder_surfaces_an_error_line_hidden_in_an_elided_middle() -> None:
+    """`docs/system-design.md` §2.2: an error is never visible only to an
+    ``expand`` call. The middle of a long match list is elided, so an
+    error-shaped line inside it must be lifted into ``encoded`` directly.
+    """
+    lines = [f"src/pkg/module_{index}.py:{index}:hit" for index in range(400)]
+    lines[200] = "rg: src/pkg/broken.py: Permission denied (os error 13)"
+    with memory_ledger() as ledger:
+        record = SearchEncoder(ledger).encode("pattern", "\n".join(lines), {}, turn=0)
+        assert "lines elided" in record.encoded, "the middle must actually be elided"
+        assert "Permission denied (os error 13)" in record.encoded
+
+
 def test_search_encoder_is_deterministic_across_encoder_instances() -> None:
     with memory_ledger() as first_ledger, memory_ledger() as second_ledger:
         raw = "src/a.py:1:x\nsrc/b.py:2:y"
