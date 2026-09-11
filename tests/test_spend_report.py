@@ -76,7 +76,7 @@ def test_the_report_validates_and_carries_every_limitation() -> None:
     validate_report_json(payload)
 
     assert tuple(payload["limitations"]) == LIMITATIONS
-    assert len(LIMITATIONS) == 7
+    assert len(LIMITATIONS) == 10
 
 
 def test_the_rendering_is_byte_identical_across_two_runs() -> None:
@@ -338,3 +338,112 @@ def test_the_report_refuses_to_write_through_a_symlink(tmp_path: Path) -> None:
         write_report(composition, destination)
 
     assert elsewhere.read_text(encoding="utf-8") == "untouched"
+
+
+def test_the_estimate_is_labelled_as_modelled_and_reported_as_a_band() -> None:
+    """A dollar figure that loses the word "modelled" reads as a measurement.
+
+    Every input to this estimate except characters-per-token is divided out
+    of the corpus's own measured tokens and cost, but that one assumption is
+    enough that a point estimate would overstate what is known. The band and
+    the `basis` label are the two things that keep the figure honest, so
+    both are pinned.
+    """
+    estimate = _payload()["estimate"]
+
+    assert estimate is not None
+    assert estimate["basis"] == "modelled_not_measured"
+    assert estimate["avoided_cost_usd_low"] < estimate["avoided_cost_usd_high"]
+    assert estimate["chars_per_token_low"] < estimate["chars_per_token_high"]
+    assert 0.0 < estimate["avoided_share_pct_low"] < estimate["avoided_share_pct_high"]
+
+
+def test_the_estimate_prices_cache_re_reads_not_just_one_turn() -> None:
+    """The reason tool-boundary removal is worth more than its character count.
+
+    Removed text is never written to the prompt cache, so it is never
+    re-read on any later turn. Pricing only the single turn it appeared in
+    would understate the effect by the corpus's own re-read multiplier,
+    which is the whole mechanism this project's compounding claim rests on.
+    """
+    payload = _payload()
+    estimate = payload["estimate"]
+    assert estimate is not None
+    tokens = payload["matched_tokens"]
+
+    expected = tokens["cache_read"] / tokens["cache_write"]
+    assert estimate["cache_reread_multiplier"] == pytest.approx(expected, rel=1e-9)
+    assert expected > 1.0
+
+    # Pin the identity, not an inequality: dropping the re-read term leaves
+    # a cost that is still "greater than zero" and can still clear a loose
+    # bound by rounding, so the formula itself is what must be asserted.
+    write_rate = estimate["effective_cache_write_usd_per_token"]
+    read_rate = estimate["effective_cache_read_usd_per_token"]
+    assert estimate["avoided_cost_usd_low"] == pytest.approx(
+        estimate["tokens_removed_low"] * (write_rate + estimate["reread_credited_low"] * read_rate),
+        abs=1e-6,
+    )
+    assert estimate["avoided_cost_usd_high"] == pytest.approx(
+        estimate["tokens_removed_high"]
+        * (write_rate + estimate["reread_credited_high"] * read_rate),
+        abs=1e-6,
+    )
+    single_turn = estimate["tokens_removed_low"] * write_rate
+    assert estimate["avoided_cost_usd_low"] > 2 * single_turn
+
+
+def test_a_corpus_with_no_removed_characters_reports_no_estimate() -> None:
+    """`None`, not zero.
+
+    Zero would read as "the codec saved nothing"; the truth for a corpus
+    that removed nothing measurable is that it cannot say.
+    """
+    decisions = SessionDecisions(
+        session_id=MATCHED,
+        eligible=0,
+        emitted=0,
+        raw_chars=0,
+        visible_chars=0,
+        full_expansions=0,
+        span_expansions=0,
+    )
+    payload = build_report(join([_usage(MATCHED)], [decisions])).payload
+
+    assert payload["estimate"] is None
+    validate_report_json(payload)
+
+
+def test_an_unlabelled_estimate_is_refused_by_the_privacy_gate() -> None:
+    """The mutation this gate exists to catch."""
+    payload = _payload()
+    assert payload["estimate"] is not None
+    payload["estimate"]["basis"] = "measured"
+
+    with pytest.raises(PrivacyViolationError, match="basis"):
+        validate_report_json(payload)
+
+
+def test_the_band_spans_the_re_read_assumption_not_only_the_token_count() -> None:
+    """The dominant input must not be held exact.
+
+    The re-read term is most of the modelled per-token price, and the
+    corpus average that produces it is inflated for tool output: it is
+    dominated by first-turn content re-read on every later turn, while the
+    codec removes results that arrive later and are re-read less. Banding
+    only characters-per-token while stating that term as fact would imply a
+    precision the estimate does not have, and would bias it upward.
+    """
+    estimate = _payload()["estimate"]
+    assert estimate is not None
+
+    assert estimate["reread_credited_low"] < estimate["reread_credited_high"]
+    assert estimate["reread_credited_high"] == pytest.approx(
+        estimate["cache_reread_multiplier"], rel=1e-9
+    )
+    # Widening the re-read assumption must widen the band, not just shift
+    # it. A bare `>` would clear on rounding noise if the credits were made
+    # equal again, so require a margin the token count alone cannot produce.
+    token_ratio = estimate["tokens_removed_high"] / estimate["tokens_removed_low"]
+    cost_ratio = estimate["avoided_cost_usd_high"] / estimate["avoided_cost_usd_low"]
+    assert cost_ratio > token_ratio * 1.2

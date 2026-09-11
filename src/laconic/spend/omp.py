@@ -144,6 +144,15 @@ class SessionUsage:
     malformed_lines: int
     unknown_usage_keys: frozenset[str]
     nested: bool = False
+    reports_host_cost: bool = True
+    """Whether this session's host records a per-turn cost at all.
+
+    A capability of the host, not a property of the number. An OMP session
+    whose turns genuinely price to ``$0.00`` still reports cost; a Claude
+    Code session records token counters and no cost whatever its spend was.
+    Inferring the difference from ``host_cost_usd == 0.0`` would conflate
+    the two.
+    """
 
 
 def _as_mapping(value: Any) -> Mapping[str, Any] | None:

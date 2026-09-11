@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from laconic.runtime.storage import resolve_data_dir
+from laconic.spend.claude_code import DEFAULT_SESSION_DIR as DEFAULT_CLAUDE_SESSION_DIR
+from laconic.spend.claude_code import load_sessions as load_claude_code_sessions
 from laconic.spend.join import Composition, join
 from laconic.spend.ledger import scan_store
 from laconic.spend.omp import load_sessions
@@ -35,9 +37,16 @@ class WrittenReport:
 def measure(
     session_dirs: list[Path] | None = None,
     data_dir: Path | None = None,
+    claude_session_dirs: list[Path] | None = None,
 ) -> Composition:
-    """Read both sources and join them. Neither source is written to."""
+    """Read every source and join them. No source is written to.
+
+    Both hosts the codec runs on are scanned. Reading only OMP would make
+    the report describe a fraction of the codec's own coverage while
+    presenting itself as the whole picture.
+    """
     sessions = load_sessions(session_dirs or [DEFAULT_SESSION_DIR])
+    sessions += load_claude_code_sessions(claude_session_dirs or [DEFAULT_CLAUDE_SESSION_DIR])
     scan = scan_store(data_dir)
     return join(sessions, scan.sessions, damaged_ledgers=scan.damaged_ledgers)
 

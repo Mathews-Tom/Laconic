@@ -52,6 +52,8 @@ class SessionComposition:
             :class:`laconic.spend.omp.SessionUsage`).
         usage: Token counters accumulated per model.
         host_cost_usd: What the host itself recorded this session cost.
+        reports_host_cost: Whether this session's host records a cost at
+            all. See :class:`laconic.spend.omp.SessionUsage`.
         decisions: The codec's record for this session, or ``None`` when the
             session ran without a runtime ledger -- which is the normal state
             for any session predating the extension or running in a profile
@@ -62,6 +64,7 @@ class SessionComposition:
     nested: bool
     usage: Mapping[str, ModelUsage]
     host_cost_usd: float
+    reports_host_cost: bool
     decisions: SessionDecisions | None
 
     @property
@@ -247,6 +250,7 @@ def join(
                 nested=record.nested,
                 usage=counters,
                 host_cost_usd=sum(turn.host_cost_usd for turn in record.turns),
+                reports_host_cost=record.reports_host_cost,
                 decisions=by_session.get(record.session_id),
             )
         )

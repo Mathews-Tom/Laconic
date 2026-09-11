@@ -20,9 +20,11 @@ from typing import Any, Final
 from laconic.spend.report import (
     ALLOWED_CODEC_KEYS,
     ALLOWED_COST_KEYS,
+    ALLOWED_ESTIMATE_KEYS,
     ALLOWED_REPORT_KEYS,
     ALLOWED_SESSION_KEYS,
     ALLOWED_TOKEN_KEYS,
+    ESTIMATE_BASIS,
     LIMITATIONS,
 )
 
@@ -49,7 +51,9 @@ _USD_KEYS: Final = frozenset({"corpus_host_cost_usd", "matched_host_cost_usd"})
 _IDENTIFIER_LIST_KEYS: Final = frozenset({"unpriced_models", "unknown_usage_keys"})
 
 #: Report keys this module checks individually rather than by group.
-_INLINE_CHECKED_KEYS: Final = frozenset({"laconic_version", "codec", "sessions", "limitations"})
+_INLINE_CHECKED_KEYS: Final = frozenset(
+    {"laconic_version", "codec", "sessions", "limitations", "estimate"}
+)
 
 #: Everything else must be a non-negative integer. Derived by set difference,
 #: not enumerated: a key added to ``ALLOWED_REPORT_KEYS`` and to no shape
@@ -159,6 +163,32 @@ def validate_session_json(payload: Any) -> None:
         _require_int(f"session.tokens.{key}", tokens[key])
 
 
+def _validate_estimate(value: Any) -> None:
+    """Raise unless the avoided-cost block is a labelled, content-free model.
+
+    ``None`` is allowed: a corpus with no cached tokens or no removed
+    characters cannot support the model, and saying so is honest.
+
+    The ``basis`` field is checked against a constant rather than merely
+    typed. A modelled dollar figure that loses the word saying it is
+    modelled is exactly the artifact this gate exists to stop -- it would
+    validate cleanly and read as a measured saving.
+    """
+    if value is None:
+        return
+    block = _require_exact_keys("estimate", value, ALLOWED_ESTIMATE_KEYS)
+    if block["basis"] != ESTIMATE_BASIS:
+        raise PrivacyViolationError(
+            f"estimate.basis must be {ESTIMATE_BASIS!r}, so a modelled figure "
+            "can never be serialized as a measured one"
+        )
+    _require_int("estimate.chars_avoided", block["chars_avoided"])
+    for name in sorted(ALLOWED_ESTIMATE_KEYS - {"basis", "chars_avoided"}):
+        _require_float(f"estimate.{name}", block[name])
+    if block["avoided_cost_usd_low"] > block["avoided_cost_usd_high"]:
+        raise PrivacyViolationError("estimate band is inverted")
+
+
 def validate_report_json(payload: Any) -> None:
     """Raise unless ``payload`` is exactly a content-free spend report.
 
@@ -179,6 +209,8 @@ def validate_report_json(payload: Any) -> None:
         _validate_cost_block(key, report[key], optional=False)
     for key in sorted(_SHARE_BLOCK_KEYS):
         _validate_cost_block(key, report[key], optional=True)
+
+    _validate_estimate(report["estimate"])
 
     codec = _require_exact_keys("codec", report["codec"], ALLOWED_CODEC_KEYS)
     for name in sorted(ALLOWED_CODEC_KEYS):
