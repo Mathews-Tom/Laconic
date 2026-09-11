@@ -14,15 +14,35 @@ Laconic's strongest distinction is file reads. Headroom's default coding profile
 
 Headroom is the stronger choice for broad client, provider, content-type, and framework coverage. Laconic is the stronger fit when the requirement is an OMP-native, provider-neutral, auditable observation boundary with durable exact recovery. No controlled head-to-head study establishes a token, cost, cache, latency, or behavior advantage for either system on the same coding-agent tasks. See [`docs/headroom-comparison.md`](docs/headroom-comparison.md) for the version-pinned comparison, evidence limits, and source links.
 
-## Install the runtime
+## Install
 
 ```bash
 uv tool install laconic
-laconic install omp --dry-run
-laconic install omp
+laconic setup --dry-run
+laconic setup
 ```
 
-Start OMP normally. Use `/laconic status|pause|resume` in the active session, `laconic status` for content-free aggregate health, and `laconic expand '<session>/F1[:first-last]'` for exact operator recovery. See [`docs/omp-runtime.md`](docs/omp-runtime.md) before installing or purging data.
+`laconic setup` detects which coding-agent hosts are present, states what each one can actually do, installs Laconic's owned adapter for every supported host, and then reports whether the runtime has recorded a real decision. It is idempotent and never contacts a provider.
+
+Capability differs by host, and the difference is the whole point of the table it prints:
+
+| Host | Codec | Observe |
+| --- | --- | --- |
+| OMP | yes | yes |
+| Claude Code | **no** | yes |
+| Codex | no | no |
+
+Only OMP compresses. Claude Code's hooks fire after a tool has already returned its full result, so installing there buys content-free receipts and no token reduction. Codex has no adapter of either kind.
+
+Installing writes a file; it does not prove the codec ran. Start a session on a host whose codec column is `yes`, invoke a `read`, `bash`, `grep`, or `glob` tool, then:
+
+```bash
+laconic setup --verify-only
+```
+
+A confirmed line means the runtime decided a real observation. A codec that decided to pass everything through is still working — most tool results are too small to shrink, and declining them is the correct outcome.
+
+To install a single adapter by hand instead, use `laconic install omp` or `laconic diagnostics observe install --client claude-code`. Use `/laconic status|pause|resume` in an active OMP session, `laconic status` for content-free aggregate health, and `laconic expand '<session>/F1[:first-last]'` for exact operator recovery. See [`docs/omp-runtime.md`](docs/omp-runtime.md) before installing or purging data.
 
 ## Documentation
 
