@@ -447,3 +447,32 @@ def test_the_band_spans_the_re_read_assumption_not_only_the_token_count() -> Non
     token_ratio = estimate["tokens_removed_high"] / estimate["tokens_removed_low"]
     cost_ratio = estimate["avoided_cost_usd_high"] / estimate["avoided_cost_usd_low"]
     assert cost_ratio > token_ratio * 1.2
+
+
+def test_an_unpriced_model_is_reported_as_a_cost_share_not_just_a_name() -> None:
+    """Naming the unpriced models is not enough on its own.
+
+    A reader cannot tell from a list of names whether they are a rounding
+    error or most of the bill. The estimate divides its per-token rates
+    out of the same modelled cost those models inflate, so a large
+    fallback share means the dollars rest on prices nobody published. The
+    share survives, because the identical error sits in the numerator and
+    the denominator and largely cancels.
+    """
+    priced = build_report(join([_usage(MATCHED)], [_decisions(MATCHED)])).payload
+    assert priced["fallback_priced_cost_share_pct"] == 0.0
+
+    unknown = SessionUsage(
+        session_id=MATCHED,
+        turns=(_turn("a-model-with-no-list-price"),),
+        turns_without_usage=0,
+        malformed_lines=0,
+        unknown_usage_keys=frozenset(),
+    )
+    mixed = build_report(join([unknown], [_decisions(MATCHED)])).payload
+
+    assert mixed["fallback_priced_cost_share_pct"] == 100.0
+    assert "a-model-with-no-list-price" in mixed["unpriced_models"]
+    estimate = mixed["estimate"]
+    assert estimate is not None
+    assert estimate["fallback_priced_cost_share_pct"] == 100.0
