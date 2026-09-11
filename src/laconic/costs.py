@@ -8,8 +8,12 @@ emission, is the meter (``docs/system-design.md`` §2.3).
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
+
+from laconic.pricing.registry import PriceRegistry, load_registry
 
 #: Cache writes bill at 1.25x the input price, cache reads at 0.10x.
 CACHE_WRITE_MULTIPLIER = 1.25
@@ -26,10 +30,33 @@ class ZeroCostError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ModelPrice:
-    """Provider list price in USD per million tokens."""
+    """Provider list price in USD per million tokens.
+
+    ``cache_read_per_mtok`` and ``cache_write_per_mtok`` are optional: a
+    provider that publishes them is priced exactly, and one that does not
+    falls back to :data:`CACHE_READ_MULTIPLIER` and
+    :data:`CACHE_WRITE_MULTIPLIER` applied to the input price. The
+    multipliers were the only model this file had, and they are a
+    approximation -- a five-minute cache write and a one-hour cache write
+    bill differently, and neither is always 1.25x.
+    """
 
     input_per_mtok: float
     output_per_mtok: float
+    cache_read_per_mtok: float | None = None
+    cache_write_per_mtok: float | None = None
+
+    @property
+    def cache_read_rate(self) -> float:
+        if self.cache_read_per_mtok is not None:
+            return self.cache_read_per_mtok
+        return self.input_per_mtok * CACHE_READ_MULTIPLIER
+
+    @property
+    def cache_write_rate(self) -> float:
+        if self.cache_write_per_mtok is not None:
+            return self.cache_write_per_mtok
+        return self.input_per_mtok * CACHE_WRITE_MULTIPLIER
 
 
 #: Published list prices. Unknown models fall back to ``DEFAULT_PRICE`` rather
@@ -46,9 +73,69 @@ PRICING: Mapping[str, ModelPrice] = {
 DEFAULT_PRICE = ModelPrice(3.0, 15.0)
 
 
+#: The data directory the registry resolves its downloaded and override
+#: layers from. Process-wide and set once, because pricing reaches the
+#: bottom of the call graph -- `ModelUsage.cost` prices a single turn and
+#: is called tens of thousands of times per scan -- and threading a path
+#: through every caller would put a parameter nobody reads on every cost
+#: signature in the package. One explicit seam, set by the CLI at entry,
+#: is the smaller cost. It is deliberately not read from the environment:
+#: an implicit source would let two commands disagree silently, which is
+#: exactly the defect this replaced.
+_PRICING_DATA_DIR: Path | None = None
+
+
+def configure_pricing(data_dir: Path | None) -> None:
+    """Point the registry at ``data_dir`` and drop any cached resolution.
+
+    Must be called before pricing anything if the caller honours a
+    ``--data-dir`` flag. Without it the downloaded registry written by
+    ``laconic pricing update`` and the local override file have no effect
+    on a single reported figure -- they resolve for display and nowhere
+    else.
+    """
+    global _PRICING_DATA_DIR
+    _PRICING_DATA_DIR = data_dir
+    active_registry.cache_clear()
+
+
+@functools.cache
+def active_registry() -> PriceRegistry:
+    """Return the resolved price registry, loaded once per process.
+
+    Cached because a corpus scan prices tens of thousands of turns and the
+    registry is immutable for the life of the process. Takes no argument
+    on purpose: a cached function keyed on a path lets one caller resolve
+    the override layer and another silently skip it.
+    """
+    return load_registry(_PRICING_DATA_DIR)
+
+
+def reset_registry_cache() -> None:
+    """Drop the cached registry so the next lookup re-reads from disk."""
+    active_registry.cache_clear()
+
+
 def price_for(model: str) -> ModelPrice:
-    """Return the list price for ``model``, falling back to Sonnet pricing."""
-    return PRICING.get(model, DEFAULT_PRICE)
+    """Return the list price for ``model``.
+
+    The hand-written :data:`PRICING` table still wins, because it is the
+    project's own reviewed statement about the models it cares most about.
+    Everything else resolves through the registry, and only a model no
+    layer knows falls back to Sonnet rates.
+    """
+    known = PRICING.get(model)
+    if known is not None:
+        return known
+    rate = active_registry().get(model)
+    if rate is None:
+        return DEFAULT_PRICE
+    return ModelPrice(
+        input_per_mtok=rate.input * 1e6,
+        output_per_mtok=rate.output * 1e6,
+        cache_read_per_mtok=None if rate.cache_read is None else rate.cache_read * 1e6,
+        cache_write_per_mtok=None if rate.cache_write is None else rate.cache_write * 1e6,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,8 +231,8 @@ class ModelUsage:
         price = price_for(model)
         return CostBreakdown(
             uncached_input=self.input_tokens * price.input_per_mtok / 1e6,
-            cache_read=(self.cache_read * price.input_per_mtok * CACHE_READ_MULTIPLIER / 1e6),
-            cache_write=(self.cache_write * price.input_per_mtok * CACHE_WRITE_MULTIPLIER / 1e6),
+            cache_read=self.cache_read * price.cache_read_rate / 1e6,
+            cache_write=self.cache_write * price.cache_write_rate / 1e6,
             output=self.output_tokens * price.output_per_mtok / 1e6,
         )
 
@@ -157,7 +244,8 @@ def unpriced_models(usage: Mapping[str, ModelUsage]) -> list[str]:
     figure is a guess. Callers report these so a guessed price is never
     mistaken for a published one.
     """
-    return sorted(model for model in usage if model not in PRICING)
+    registry = active_registry()
+    return sorted(model for model in usage if model not in PRICING and registry.get(model) is None)
 
 
 def session_cost(usage: Mapping[str, ModelUsage]) -> CostBreakdown:

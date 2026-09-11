@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Model list prices now resolve through a registry with three layers: a local override file, a registry downloaded by `laconic pricing update`, and a bundled snapshot pinned to one upstream commit and shipped in the wheel. The bundled layer prices **3,134 models** and keeps the default path entirely offline.
+- `laconic pricing show` reports which layer is active, how many models it prices, and where to put overrides. `laconic pricing update` refreshes it — **the only command in Laconic that reaches the network**, and it runs only when asked. Nothing fetches on a schedule and a price lookup never reaches the internet on its own.
+- Where a provider publishes cache-read and cache-write prices, those are now used instead of the fixed 0.10x/1.25x multipliers. The multipliers remain the fallback for providers that publish neither, and are an approximation: a five-minute and a one-hour cache write bill differently and neither is always 1.25x.
+- A local override file at `model-prices-override.json` in the runtime data directory handles models no public registry carries — a synthetic fixture model, or a floating `-latest` alias naming no concrete priced model. On the development corpus that is four models, down from nineteen.
+
+### Changed
+
+- On the development corpus the fallback-priced share of the estimate's own denominator falls from **75.4% to 0.0%**, so the dollar figures are quotable again rather than withheld. `claude-opus-5` alone was $5.2K of spend charged at Sonnet rates.
+
+### Added
+
 - The spend report now reports `fallback_priced_cost_share_pct`: how much of the modelled cost comes from models with no published list price, billed at the Sonnet fallback. Naming the unpriced models was not enough — a reader could not tell whether they were a rounding error or most of the bill. On the development corpus they are 44% of the corpus and **75% of the matched sessions the estimate is built from**.
 - Above a 25% fallback share the dollar figures are withheld from `laconic status`, `laconic savings`, and the written report, which lead with the percentage instead. The estimate divides its per-token rates out of the same cost those models inflate, so the dollars inherit the error while the share largely cancels it — the same error sits in both the numerator and the denominator.
 

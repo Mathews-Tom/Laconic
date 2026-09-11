@@ -209,9 +209,16 @@ def test_the_hosts_cost_and_laconics_model_are_both_reported() -> None:
 
 
 def test_an_unpriced_model_is_named_rather_than_silently_guessed() -> None:
-    composition = join([_usage(MATCHED, (_turn(model="gpt-5.6-terra"),))], [])
+    """A model no layer prices -- not merely one absent from the hand-written table.
 
-    assert composition.unpriced_models == ["gpt-5.6-terra"]
+    Most models now resolve through the bundled registry, so this fixture
+    has to be a name no public registry carries. Real corpora contain
+    them: a synthetic fixture model, or a floating ``-latest`` alias that
+    names no concrete priced model.
+    """
+    composition = join([_usage(MATCHED, (_turn(model="<synthetic-fixture-model>"),))], [])
+
+    assert composition.unpriced_models == ["<synthetic-fixture-model>"]
     # The fallback price is Sonnet's, so the host's own figure and Laconic's
     # disagree. Reporting only one of them would hide that.
     assert composition.host_cost_usd() != pytest.approx(composition.modelled_cost().total)
