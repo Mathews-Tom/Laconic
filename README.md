@@ -1,6 +1,6 @@
 # Laconic – Compress what a coding agent carries, not what it says.
 
-> **Status: the opt-in OMP runtime beta is published.** Version 0.10.0 adds read-only spend-composition reporting to the installable package. The repository also records the immutable incomplete M20-v1 result and the completed M20-v2 variance pilot, which reports dispersion, cross-arm cost correlations, and a confirmatory sample size but no savings figure. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
+> **Status: the opt-in OMP runtime beta is published.** Version 0.11.0 extends the codec to Claude Code through a transforming `PostToolUse` hook, adds guided `laconic setup` onboarding, and reports a **modelled** avoided-cost estimate through `laconic savings` — a model, never a measured saving. The repository also records the immutable incomplete M20-v1 result and the completed M20-v2 variance pilot, which reports dispersion, cross-arm cost correlations, and a confirmatory sample size but no savings figure. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
 
 Laconic is a private, local runtime codec for existing coding agents. It reduces eligible model-visible `read`, `bash`, `grep`, and `glob` observations while preserving exact, on-demand access to omitted content. It integrates with OMP rather than replacing it.
 
@@ -95,7 +95,7 @@ The re-read term is why tool-boundary removal is worth more than its character c
 
 ## Source checkout
 
-Releases from 0.9.0 onward contain the runtime, codec, evaluation, rendering, and Observe surfaces. Version 0.10.0 adds read-only spend-composition reporting to the installable package and versions repository-only controlled-spend research tooling, whose M20-v2 pilot has now run once and completed. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
+Releases from 0.9.0 onward contain the runtime, codec, evaluation, rendering, and Observe surfaces. Version 0.10.0 added read-only spend-composition reporting. Version 0.11.0 adds the Claude Code codec adapter, `laconic setup`, and `laconic savings`, and versions repository-only controlled-spend research tooling whose M20-v2 pilot has now run once and completed. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
 
 ```bash
 uv run laconic research measure tests/corpus --expect tests/corpus/expected.json

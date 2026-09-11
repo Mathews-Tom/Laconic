@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-12
+
 ### Added
 
 - Added `laconic savings`, a first-class command that scans both hosts and closes with the modelled avoided-cost band. The estimate previously existed only under `laconic research spend report` — a namespace the docs describe as not authorizing product claims — which put the one number a user cares about where nobody would find it.
@@ -41,6 +43,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - M20-v1 `pilot run` is permanently closed. M20-v1 `pilot report` and `pilot check` remain fully operational for historical verification, and both v1 public artifacts stay byte-identical.
 - The `live_state_changed` stopping rule is now attributed instead of wholesale. The M20-v2 manifest gains a required `live_state` object declaring the measured roots and an exact ambient-writer path allowlist, and the runner compares a digest computed over everything outside that allowlist. Ambient local agent activity no longer invalidates a campaign, while any other change to either live root still does, and the allowlist can never match the live credential database. This changes the manifest digest to `0a7cacb9e3970ed578a78eb1363d7e6fa70dec8fd7fbdd45aec1fa15d5efac28`, superseding `526c5de204d39c4c2bb8d9d96bb54163f5caff52e55940467fd036f4f4acf45f`, which was never executed.
 - The ambient allowlist now covers the write-ahead and shared-memory sidecars of every top-level OMP agent database rather than only `agent.db`, matching the stated rule that SQLite sidecars are ambient. `pilot quiesce` found `history.db-{shm,wal}` moving on a real machine. The main database files, including the credential database, remain attributed.
+
+### Fixed
+
+- `SearchEncoder` now elides the middle of a long match list. It previously interned paths but never elided, and interning alone recovers only repeated path bytes while adding a legend, so an encoded search result was reliably larger than its input and the runtime's strictly-smaller rule passed essentially every one of them through. Measured over 1,350 real search observations: encoded/raw 1.02 → 0.39 and emission 0.4% → 41.3%, with exact recovery preserved on all of them and 55% left fully verbatim.
+- `SearchEncoder` now interns a path only when it appears more than once. A glob result is a list of distinct paths, so interning every one of them reproduced the entire payload in the legend while still paying a reference on every row, and glob results encoded to roughly 1.42x their raw size. Split by tool, emission moved from 4.3% to 28.0% for `Glob` and from 0.4% to 45.9% for `Grep`, and no observation encodes larger than it did before.
+- Together these remove roughly 5.9 million characters at the tool boundary across the development corpus, where the codec previously passed those results through unchanged. **Characters only: no token, cost, or savings claim follows.** The `Read` and `Bash` paths are unaffected.
 
 ## [0.10.0] — 2026-09-09
 
@@ -170,7 +178,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Initial packaging, lint, strict typing, test, and CI surface, with an importable `laconic` package and a `laconic` console script exposing `--version` and `--help`.
 
-[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.8.0...v0.9.0
