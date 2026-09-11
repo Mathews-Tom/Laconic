@@ -2,33 +2,30 @@
 
 Laconic's codec runs in Claude Code through a `PostToolUse` hook that returns `updatedToolOutput`, the one hook field that *replaces* what the model sees rather than adding to it. This document describes the adapter, how to enable it, and the limits measured on real sessions.
 
-This is separate from [Observe](observe-design.md). Observe records content-free receipts and compresses nothing; its entrypoint must never write to stdout (H-46/H-48). Transformation delivers its replacement *as* stdout, so the two are different programs with contradictory output contracts. `laconic setup` installs Observe's hooks only. The codec hook is opt-in and configured explicitly.
+This is separate from [Observe](observe-design.md). Observe records content-free receipts and compresses nothing; its entrypoint must never write to stdout (H-46/H-48). Transformation delivers its replacement *as* stdout, so the two are different programs with contradictory output contracts. `laconic setup` installs both, as separate owners of one settings file.
 
 ## Enable it
 
-Add one entry to `~/.claude/settings.json` (user scope) or `.claude/settings.json` (project scope):
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Bash|Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/absolute/path/to/python",
-            "args": ["-m", "laconic.runtime.claude_code"],
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
+```bash
+laconic setup            # installs the codec hook and Observe's receipts
 ```
 
-Use the interpreter that has Laconic installed; `laconic setup --format json` prints the one its own adapters record. Verify with `laconic status`, which counts the decisions the hook records.
+Or install just the codec hook, without Observe's diagnostics:
+
+```bash
+laconic install claude-code --dry-run
+laconic install claude-code
+```
+
+`--scope user` (the default) writes `~/.claude/settings.json`; `--scope project` writes `.claude/settings.json`. Both are idempotent, preserve every foreign hook entry and every other settings key, and never contact a provider.
+
+The codec hook and Observe's receipt hooks are **separate owners** of the same settings file, so they install side by side and are removed independently:
+
+```bash
+laconic uninstall claude-code    # removes the codec hook only
+```
+
+Verify with `laconic setup --verify-only`, which counts the decisions the hook has recorded.
 
 Recover any replaced output exactly:
 
@@ -77,7 +74,6 @@ The adapter never constructs a decision of its own. It drives the same `RuntimeS
 
 ## Known limits
 
-- **No installer yet.** Configuration is manual, as above. `laconic setup` installs Observe's hooks only and says so.
 - **Long single lines are not compressible.** Elision is line-based. A result with few but enormous lines — a 150,000-character diff over 24 lines appears in the measured corpus — passes through untouched.
 - **Parallel tool batches lose some compression.** Claude Code fires `PostToolUse` concurrently for batched tool calls. Each hook is a separate process that reads its sequence number from the ledger, so two concurrent calls in one session can select the same sequence; the ledger's `PRIMARY KEY (session_id, sequence)` rejects the second, which then fails open and keeps its original output. Nothing is corrupted and nothing is double-emitted — the raced call is simply not compressed. Expect a transform rate below the measured figures under heavy parallel batching.
 - **Acceptance is not observable from inside the hook.** Claude Code reports nothing back when it rejects a replacement. The adapter's defence is that it never builds a shape; confirmation requires inspecting a session transcript.

@@ -22,9 +22,9 @@ from typing import Any
 
 from laconic.observe.contracts import ClientId
 from laconic.observe.preview import (
-    CLAUDE_CODE_EVENTS,
-    CLAUDE_CODE_OWNED_MARKER,
+    OBSERVE_OWNER,
     OMP_OWNED_MARKER,
+    ClaudeCodeOwner,
     claude_code_event_is_owned,
 )
 
@@ -51,7 +51,9 @@ def _entrypoint_args(client: ClientId) -> list[str]:
     return [*ENTRYPOINT_MODULE_ARGS, "--client", client.value]
 
 
-def _owned_hook_entry(*, python: str, timeout: float) -> dict[str, Any]:
+def _owned_hook_entry(
+    *, python: str, timeout: float, args: list[str], marker: str
+) -> dict[str, Any]:
     """One Observe-owned Claude Code hook-matcher-group entry.
 
     The ownership marker lives in `statusMessage`, a purely cosmetic
@@ -66,9 +68,9 @@ def _owned_hook_entry(*, python: str, timeout: float) -> dict[str, Any]:
             {
                 "type": "command",
                 "command": python,
-                "args": _entrypoint_args(ClientId.CLAUDE_CODE),
+                "args": args,
                 "timeout": timeout,
-                "statusMessage": CLAUDE_CODE_OWNED_MARKER,
+                "statusMessage": marker,
             }
         ],
     }
@@ -80,6 +82,8 @@ def render_claude_code_settings_installed(
     python: str,
     tool_event_timeout: float = DEFAULT_TOOL_EVENT_TIMEOUT_SECONDS,
     session_end_timeout: float = DEFAULT_SESSION_END_TIMEOUT_SECONDS,
+    owner: ClaudeCodeOwner = OBSERVE_OWNER,
+    args: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a new settings document with one Observe-owned hook entry
     added to each of `CLAUDE_CODE_EVENTS`.
@@ -91,16 +95,21 @@ def render_claude_code_settings_installed(
     """
     rendered = copy.deepcopy(existing)
     hooks = rendered.setdefault("hooks", {})
-    for event in CLAUDE_CODE_EVENTS:
-        if claude_code_event_is_owned(rendered, event):
+    entry_args = _entrypoint_args(ClientId.CLAUDE_CODE) if args is None else args
+    for event in owner.events:
+        if claude_code_event_is_owned(rendered, event, owner):
             continue
         timeout = session_end_timeout if event == "SessionEnd" else tool_event_timeout
         groups = hooks.setdefault(event, [])
-        groups.append(_owned_hook_entry(python=python, timeout=timeout))
+        groups.append(
+            _owned_hook_entry(python=python, timeout=timeout, args=entry_args, marker=owner.marker)
+        )
     return rendered
 
 
-def render_claude_code_settings_removed(existing: dict[str, Any]) -> dict[str, Any]:
+def render_claude_code_settings_removed(
+    existing: dict[str, Any], owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> dict[str, Any]:
     """Return a new settings document with every Observe-owned hook entry
     removed.
 
@@ -113,7 +122,7 @@ def render_claude_code_settings_removed(existing: dict[str, Any]) -> dict[str, A
     if not isinstance(hooks, dict):
         return rendered
 
-    for event in CLAUDE_CODE_EVENTS:
+    for event in owner.events:
         groups = hooks.get(event)
         if not groups:
             continue
@@ -122,8 +131,8 @@ def render_claude_code_settings_removed(existing: dict[str, Any]) -> dict[str, A
             surviving_handlers = [
                 handler
                 for handler in group.get("hooks", [])
-                if CLAUDE_CODE_OWNED_MARKER not in str(handler.get("command", ""))
-                and CLAUDE_CODE_OWNED_MARKER not in str(handler.get("statusMessage", ""))
+                if owner.marker not in str(handler.get("command", ""))
+                and owner.marker not in str(handler.get("statusMessage", ""))
             ]
             if surviving_handlers:
                 surviving_groups.append({**group, "hooks": surviving_handlers})

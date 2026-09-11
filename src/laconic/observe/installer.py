@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any
 
 from laconic.observe.preview import (
+    OBSERVE_OWNER,
     OMP_OWNED_FILENAME,
     OMP_OWNED_MARKER,
+    ClaudeCodeOwner,
     InstallPlan,
     preview_claude_code_install,
     preview_claude_code_remove,
@@ -89,36 +91,50 @@ class InstallResult:
     path: Path
 
 
-def preview_claude_code(path: Path, *, remove: bool = False) -> InstallPlan:
+def preview_claude_code(
+    path: Path, *, remove: bool = False, owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> InstallPlan:
     """Dry-run preview against the real file at ``path``. Never writes."""
     existing = _read_claude_code_settings(path)
-    return preview_claude_code_remove(existing) if remove else preview_claude_code_install(existing)
+    if remove:
+        return preview_claude_code_remove(existing, owner)
+    return preview_claude_code_install(existing, owner)
 
 
-def apply_claude_code_install(path: Path, *, python: str | None = None) -> InstallResult:
+def apply_claude_code_install(
+    path: Path,
+    *,
+    python: str | None = None,
+    owner: ClaudeCodeOwner = OBSERVE_OWNER,
+    args: list[str] | None = None,
+) -> InstallResult:
     """Read ``path`` (if present), and atomically write an installed
     document back only if anything would actually change. Idempotent:
     calling this twice in a row writes once."""
     existing = _read_claude_code_settings(path)
-    plan = preview_claude_code_install(existing)
+    plan = preview_claude_code_install(existing, owner)
     changed = any(action.kind == "add" for action in plan.actions)
     if changed:
-        rendered = render_claude_code_settings_installed(existing, python=python or sys.executable)
+        rendered = render_claude_code_settings_installed(
+            existing, python=python or sys.executable, owner=owner, args=args
+        )
         _atomic_write_text(path, json.dumps(rendered, indent=2, sort_keys=True) + "\n")
     return InstallResult(plan=plan, applied=changed, path=path)
 
 
-def apply_claude_code_remove(path: Path) -> InstallResult:
+def apply_claude_code_remove(
+    path: Path, *, owner: ClaudeCodeOwner = OBSERVE_OWNER
+) -> InstallResult:
     """Read ``path`` (if present), and atomically write a document with
     every Observe-owned entry stripped, only if anything would actually
     change. Never deletes the settings file itself, even when the result
     is an empty document -- the file may predate Observe and belong to
     the operator, not to this installer."""
     existing = _read_claude_code_settings(path)
-    plan = preview_claude_code_remove(existing)
+    plan = preview_claude_code_remove(existing, owner)
     changed = any(action.kind == "remove" for action in plan.actions)
     if changed:
-        rendered = render_claude_code_settings_removed(existing)
+        rendered = render_claude_code_settings_removed(existing, owner)
         _atomic_write_text(path, json.dumps(rendered, indent=2, sort_keys=True) + "\n")
     return InstallResult(plan=plan, applied=changed, path=path)
 

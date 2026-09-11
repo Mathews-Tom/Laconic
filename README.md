@@ -26,15 +26,15 @@ laconic setup
 
 Capability differs by host, and the difference is the whole point of the table it prints:
 
-| Host | Codec installed by `setup` | Observe |
+| Host | Codec | Observe |
 | --- | --- | --- |
 | OMP | yes | yes |
-| Claude Code | no — opt-in, see below | yes |
+| Claude Code | yes | yes |
 | Codex | no | no |
 
-`setup` installs the codec on OMP and content-free receipt hooks on Claude Code. Codex has no adapter of either kind.
+`setup` installs the codec on OMP, and on Claude Code installs both a transforming `PostToolUse` hook and content-free receipt hooks as separate owners of one settings file. Codex has no adapter of either kind.
 
-Claude Code **can** run the codec, through a transforming `PostToolUse` hook that replaces the tool result the model sees. It is opt-in and configured explicitly rather than by `setup`; see [`docs/claude-code-codec.md`](docs/claude-code-codec.md) for the settings entry, the shape-fidelity constraint it is built around, and what it removed on real sessions.
+The two hosts compress by different mechanisms and over different tool sets. OMP intercepts every eligible tool result; Claude Code replaces `Bash` and `Read` results through a hook, and does not expose `Grep` or `Glob` as tools at all. See [`docs/claude-code-codec.md`](docs/claude-code-codec.md) for the shape-fidelity constraint that design is built around and what it removed on real sessions.
 
 Installing writes a file; it does not prove the codec ran. Start a session on a host whose codec column is `yes`, invoke a `read`, `bash`, `grep`, or `glob` tool, then:
 
