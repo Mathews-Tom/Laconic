@@ -15,7 +15,15 @@ from typing import Literal
 from laconic import __version__
 from laconic.codec.encoders.file import FileEncoder
 from laconic.codec.observe import ObservationCodec, subject_for
-from laconic.costs import CostBreakdown, ModelUsage, session_cost, unpriced_models
+from laconic.costs import (
+    CostBreakdown,
+    ModelUsage,
+    active_registry,
+    configure_pricing,
+    reset_registry_cache,
+    session_cost,
+    unpriced_models,
+)
 from laconic.gates.protocol import GateSuiteResult
 from laconic.gates.reasoning_accuracy import ReasoningAccuracyFixtureError
 from laconic.gates.runner import UnknownGateError, run_gates
@@ -68,6 +76,8 @@ from laconic.observe.preview import (
     InstallPlan,
 )
 from laconic.observe.status import compute_report, compute_status
+from laconic.pricing.registry import OVERRIDE_FILENAME, UPSTREAM_URL
+from laconic.pricing.update import PriceUpdateError, fetch_registry, write_registry
 from laconic.render.narrate import (
     NarrationConfig,
     NarrationConfigurationError,
@@ -361,6 +371,30 @@ def build_parser() -> argparse.ArgumentParser:
     savings.add_argument("--output", type=Path, default=None)
     savings.add_argument("--format", choices=["text", "json"], default="text")
     savings.set_defaults(handler=_savings)
+
+    pricing = subcommands.add_parser(
+        "pricing",
+        help="inspect or refresh the per-model list prices cost figures use",
+        description=(
+            "Laconic prices a model from a bundled registry pinned to one upstream "
+            "commit. `update` is the only command in Laconic that reaches the "
+            "network, and it runs only when you ask it to."
+        ),
+    )
+    pricing_commands = pricing.add_subparsers(dest="pricing_command")
+    pricing_show = pricing_commands.add_parser(
+        "show", help="report which registry is active and what it covers"
+    )
+    pricing_show.add_argument("--data-dir", type=Path, default=None)
+    pricing_show.add_argument("--format", choices=["text", "json"], default="text")
+    pricing_show.set_defaults(handler=_pricing_show)
+    pricing_update = pricing_commands.add_parser(
+        "update", help="download a refreshed registry (the only network call Laconic makes)"
+    )
+    pricing_update.add_argument("--data-dir", type=Path, default=None)
+    pricing_update.add_argument("--url", default=UPSTREAM_URL, help="override the source")
+    pricing_update.add_argument("--format", choices=["text", "json"], default="text")
+    pricing_update.set_defaults(handler=_pricing_update)
 
     purge = subcommands.add_parser(
         "purge",
@@ -816,6 +850,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if handler is None:
         parser.print_help()
         return EXIT_OK
+    # One seam, before any handler prices anything. Without it the
+    # downloaded registry and the local override file resolve for
+    # `pricing show` and for nothing else, so every reported figure
+    # silently ignores them.
+    configure_pricing(resolve_data_dir(getattr(args, "data_dir", None)))
     exit_code: int = handler(args)
     return exit_code
 
@@ -1087,6 +1126,51 @@ def _runtime_status(args: argparse.Namespace) -> int:
         print(f"  estimated {estimate.age_text} — rerun with `laconic savings`")
     else:
         print(f"  estimated {estimate.age_text}")
+    return EXIT_OK
+
+
+def _pricing_show(args: argparse.Namespace) -> int:
+    configure_pricing(resolve_data_dir(args.data_dir))
+    registry = active_registry()
+    document = {
+        "source": registry.source,
+        "source_commit": registry.source_commit,
+        "models": len(registry.rates),
+        "local_overrides": registry.overrides,
+        "override_file": str(resolve_data_dir(args.data_dir) / OVERRIDE_FILENAME),
+    }
+    if args.format == "json":
+        print(json.dumps(document, indent=2, sort_keys=True))
+        return EXIT_OK
+    print("Laconic model pricing")
+    print(f"  source: {registry.source}")
+    print(f"  models priced: {len(registry.rates)}")
+    print(f"  local overrides: {registry.overrides}")
+    print(f"  override file: {document['override_file']}")
+    print("  refresh with `laconic pricing update` (the only network call Laconic makes)")
+    return EXIT_OK
+
+
+def _pricing_update(args: argparse.Namespace) -> int:
+    data_dir = resolve_data_dir(args.data_dir)
+    try:
+        models = fetch_registry(args.url)
+        result = write_registry(data_dir, models, url=args.url)
+    except (PriceUpdateError, OSError) as error:
+        print(f"laconic pricing update: {error}", file=sys.stderr)
+        return EXIT_SPEND_SOURCE_ERROR
+    reset_registry_cache()
+    if args.format == "json":
+        print(
+            json.dumps(
+                {"path": str(result.path), "models": result.models},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return EXIT_OK
+    print(f"Priced {result.models} models from {args.url}")
+    print(f"  wrote {result.path}")
     return EXIT_OK
 
 
