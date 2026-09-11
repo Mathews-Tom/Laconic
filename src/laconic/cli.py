@@ -149,6 +149,12 @@ from laconic.runtime.storage import (
     UnsafeStoragePathError,
     resolve_data_dir,
 )
+from laconic.setup import (
+    HOST_CLAUDE_CODE,
+    HOST_OMP,
+    detect_hosts,
+    verify_runtime,
+)
 from laconic.spend.cli import DEFAULT_SESSION_DIR, WrittenReport, measure, write_report
 from laconic.spend.join import DuplicateSessionError
 from laconic.spend.omp import MalformedSessionError
@@ -266,6 +272,36 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--data-dir", type=Path, help="runtime storage root")
     status.add_argument("--format", choices=["text", "json"], default="text")
     status.set_defaults(handler=_runtime_status)
+
+    setup = subcommands.add_parser(
+        "setup",
+        help="detect hosts, install what each supports, and verify the codec ran",
+        description=(
+            "Detect which coding-agent hosts are present, state what each one can "
+            "actually do, install Laconic's owned adapter for every supported host, "
+            "and report whether the runtime has since recorded a real decision. "
+            "Idempotent, and never contacts a provider."
+        ),
+    )
+    setup.add_argument("--scope", choices=["project", "user"], default="user")
+    setup.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="skip installation; only detect hosts and report runtime evidence",
+    )
+    setup.add_argument("--dry-run", action="store_true", help="preview only; never write")
+    setup.add_argument(
+        "--python",
+        help="absolute interpreter recorded by installed adapters (default: this interpreter)",
+    )
+    setup.add_argument("--data-dir", type=Path, help="runtime storage root")
+    setup.add_argument(
+        "--user-dir",
+        type=Path,
+        help="explicit user-scope OMP extension directory (required for a named profile)",
+    )
+    setup.add_argument("--format", choices=["text", "json"], default="text")
+    setup.set_defaults(handler=_setup)
 
     purge = subcommands.add_parser(
         "purge",
@@ -954,6 +990,140 @@ def _runtime_status(args: argparse.Namespace) -> int:
         print(
             f"  damaged ledgers: {damaged} (unreadable schema; "
             "remove with `laconic purge --older-than <duration>`)"
+        )
+    return EXIT_OK
+
+
+def _setup_install_omp(args: argparse.Namespace) -> dict[str, object]:
+    directory = runtime_omp_extensions_directory(
+        scope=args.scope,
+        cwd=Path.cwd(),
+        home=Path.home(),
+        user_dir=args.user_dir,
+    )
+    if args.dry_run:
+        plan = preview_runtime_omp_install(
+            directory, python=args.python, data_directory=args.data_dir
+        )
+        return {
+            "host": HOST_OMP,
+            "capability": "codec",
+            "operation": plan.operation,
+            "path": str(plan.path),
+            "applied": False,
+            "preview": True,
+        }
+    result = apply_runtime_omp_install(directory, python=args.python, data_directory=args.data_dir)
+    return {
+        "host": HOST_OMP,
+        "capability": "codec",
+        "operation": result.plan.operation,
+        "path": str(result.plan.path),
+        "applied": result.applied,
+        "preview": False,
+    }
+
+
+def _setup_install_claude_code(args: argparse.Namespace) -> dict[str, object]:
+    target = _claude_code_settings_path(args.scope)
+    if args.dry_run:
+        plan = preview_claude_code(target)
+        return {
+            "host": HOST_CLAUDE_CODE,
+            "capability": "observe",
+            "operation": plan.mechanism.value,
+            "path": str(target),
+            "applied": False,
+            "preview": True,
+        }
+    result = apply_claude_code_install(target, python=args.python)
+    return {
+        "host": HOST_CLAUDE_CODE,
+        "capability": "observe",
+        "operation": result.plan.mechanism.value,
+        "path": str(target),
+        "applied": result.applied,
+        "preview": False,
+    }
+
+
+def _setup(args: argparse.Namespace) -> int:
+    hosts = detect_hosts(cwd=Path.cwd(), home=Path.home())
+    actions: list[dict[str, object]] = []
+    if not args.verify_only:
+        for host in hosts:
+            if not host.actionable:
+                continue
+            # Each host maps its own failures: an OSError writing Claude
+            # Code's settings is not an OMP install error, and reporting it
+            # under one shared exit code would send an operator to the wrong
+            # adapter.
+            if host.host == HOST_OMP:
+                try:
+                    actions.append(_setup_install_omp(args))
+                except (OmpInstallError, OSError) as error:
+                    print(f"laconic setup: {error}", file=sys.stderr)
+                    return EXIT_OMP_INSTALL_ERROR
+            elif host.host == HOST_CLAUDE_CODE:
+                try:
+                    actions.append(_setup_install_claude_code(args))
+                except ConfigParseError as error:
+                    print(f"laconic setup: {error}", file=sys.stderr)
+                    return EXIT_OBSERVE_CONFIG_PARSE_ERROR
+                except OwnershipConflictError as error:
+                    print(f"laconic setup: {error}", file=sys.stderr)
+                    return EXIT_OBSERVE_OWNERSHIP_CONFLICT
+                except OSError as error:
+                    print(f"laconic setup: {error}", file=sys.stderr)
+                    return EXIT_OBSERVE_CONFIG_PARSE_ERROR
+    try:
+        verification = verify_runtime(args.data_dir)
+    except (UnsafeStoragePathError, sqlite3.Error, OSError) as error:
+        print(f"laconic setup: {error}", file=sys.stderr)
+        return EXIT_RUNTIME_STORAGE_ERROR
+    if args.format == "json":
+        print(
+            json.dumps(
+                {
+                    "hosts": [host.to_json() for host in hosts],
+                    "actions": actions,
+                    "verification": verification.to_json(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return EXIT_OK
+    print("Laconic setup")
+    print(f"  {'host':<12} {'present':<8} {'codec':<6} {'observe':<8}")
+    for host in hosts:
+        print(
+            f"  {host.host:<12} {'yes' if host.detected else 'no':<8} "
+            f"{'yes' if host.codec else 'no':<6} {'yes' if host.observe else 'no':<8}"
+            f"  {host.detail}"
+        )
+    if args.verify_only:
+        print("  installation skipped (--verify-only)")
+    elif actions:
+        for action in actions:
+            if action["preview"]:
+                state = "preview"
+            else:
+                state = "applied" if action["applied"] else "unchanged"
+            print(f"  [{state}] {action['host']} {action['capability']}: {action['path']}")
+    else:
+        print("  nothing to install: no supported host detected")
+    print(f"  codec confirmed: {'yes' if verification.confirmed else 'no'}")
+    print(f"  {verification.detail}")
+    if verification.confirmed and not args.verify_only:
+        # Storage is cumulative and carries no install boundary, so this
+        # evidence may predate the adapters just written. Saying so keeps
+        # the line from reading as proof that *this* install works.
+        print(
+            "  note: that evidence is the runtime's recorded history and may "
+            "predate this install. For evidence of this install, invoke a "
+            "read, bash, grep, or glob tool in a new session, then re-run "
+            "`laconic setup --verify-only`."
         )
     return EXIT_OK
 
