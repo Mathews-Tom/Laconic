@@ -46,6 +46,20 @@ A confirmed line means the runtime decided a real observation. A codec that deci
 
 To install a single adapter by hand instead, use `laconic install omp` or `laconic diagnostics observe install --client claude-code`. Use `/laconic status|pause|resume` in an active OMP session, `laconic status` for content-free aggregate health, and `laconic expand '<session>/F1[:first-last]'` for exact operator recovery. See [`docs/omp-runtime.md`](docs/omp-runtime.md) before installing or purging data.
 
+## Modelled cost avoided
+
+```bash
+laconic research spend report
+```
+
+Writes a local, content-free composition of where your model spend went, alongside a **modelled** estimate of what the codec's removed characters would otherwise have cost. Both hosts are scanned.
+
+The estimate is a band, not a figure, and it is labelled `modelled_not_measured` everywhere it appears. Every session Laconic has ever recorded ran with the codec **on**, so no counterfactual exists and **nothing here is a measured saving**.
+
+What the model does is divide the per-token cache prices out of your own corpus rather than a price table. What it assumes — and therefore what the band spans — is how many characters a token carries, and how much of your corpus's cache re-read rate the removed tokens would really have seen. That second assumption is most of the price, so it is banded rather than stated as fact.
+
+The re-read term is why tool-boundary removal is worth more than its character count suggests. Text removed there is written to the prompt cache once and re-read never, so removal compounds across a session instead of saving once. The corpus average overstates it for tool output, which arrives later in a session than the system prompt it is averaged with, so the low end of the band discounts it.
+
 ## Documentation
 
 | Document | What's in it |

@@ -50,7 +50,61 @@ LIMITATIONS: Final = (
     "sessions_are_not_controlled_units_and_are_not_comparable",
     "a_ledger_only_proves_the_codec_ran_not_that_it_covered_the_session",
     "committed_k1_fixture_8_53_pct_still_bounds_general_savings_claims",
+    "host_reported_cost_covers_only_hosts_that_report_one",
+    "avoided_cost_is_modelled_from_assumptions_and_is_not_a_measurement",
+    "avoided_cost_assumes_removed_text_would_have_been_cached_and_re_read",
 )
+
+#: How many characters of tool output a token carries. Code and structured
+#: output tokenize denser than prose and this corpus is both, so the
+#: estimate is reported as a range and never as a point.
+CHARS_PER_TOKEN_BOUNDS: Final = (3.0, 4.0)
+
+#: What fraction of the corpus-average cache re-read count to credit the
+#: codec's removed tokens with, at the low and high ends of the band.
+#:
+#: The corpus average is ``cache_read / cache_write`` over every cached
+#: token, and it is dominated by content written on the first turn -- the
+#: system prompt and tool definitions -- which is then re-read on every
+#: turn that follows. The codec removes tool *output*, which arrives later
+#: in a session and is therefore re-read fewer times than that average.
+#: Crediting removed tokens with the full corpus average would overstate
+#: the estimate in one direction, and this term is roughly 85% of the
+#: modelled per-token price, so the overstatement would dominate.
+#:
+#: The low end credits half the corpus average, which is what a tool result
+#: arriving at a uniformly random point in a session would see. The high
+#: end credits the full average, the most favourable reading. The truth is
+#: between them and is not measured here, so both ends are carried into the
+#: band rather than one being presented as exact.
+REREAD_CREDIT_BOUNDS: Final = (0.5, 1.0)
+
+#: Exactly the keys the avoided-cost estimate block may carry.
+ALLOWED_ESTIMATE_KEYS: Final = frozenset(
+    {
+        "basis",
+        "chars_avoided",
+        "chars_per_token_high",
+        "chars_per_token_low",
+        "tokens_removed_low",
+        "tokens_removed_high",
+        "cache_reread_multiplier",
+        "reread_credited_low",
+        "reread_credited_high",
+        "effective_cache_write_usd_per_token",
+        "effective_cache_read_usd_per_token",
+        "avoided_cost_usd_low",
+        "avoided_cost_usd_high",
+        "avoided_share_pct_low",
+        "avoided_share_pct_high",
+        "denominator_usd",
+    }
+)
+
+#: The value of the estimate block's ``basis`` field. A constant, and
+#: verified by the privacy gate, so an estimate can never be serialized
+#: without the word that says it is not a measurement.
+ESTIMATE_BASIS: Final = "modelled_not_measured"
 
 #: Exactly the keys a serialized report may carry.
 ALLOWED_REPORT_KEYS: Final = frozenset(
@@ -61,6 +115,7 @@ ALLOWED_REPORT_KEYS: Final = frozenset(
         "root_sessions",
         "nested_sessions",
         "sessions_without_priced_turns",
+        "priced_sessions_without_host_cost",
         "priced_turns",
         "matched_sessions",
         "unmatched_spend_sessions",
@@ -79,6 +134,7 @@ ALLOWED_REPORT_KEYS: Final = frozenset(
         "unpriced_models",
         "unknown_usage_keys",
         "sessions",
+        "estimate",
         "limitations",
     }
 )
@@ -219,11 +275,76 @@ class SpendReport:
         return json.dumps(self.payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
 
 
+def _estimate(
+    tokens: dict[str, int], cost: dict[str, float], chars_avoided: int
+) -> dict[str, Any] | None:
+    """Model the provider cost the codec's removed characters avoided.
+
+    Returns ``None`` when the corpus cannot support the model rather than
+    returning zeros, because a zero here would read as "the codec saved
+    nothing" when the truth is "this corpus cannot say".
+
+    The model is deliberately self-calibrating: the per-token prices and
+    the re-read multiplier are divided out of this corpus's own measured
+    tokens and cost, not taken from a price table or a remembered
+    constant. What remains unmeasured is characters per
+    token and how much of the corpus's re-read rate those tokens would
+    really have seen. Both are carried into the band.
+
+    The mechanism it prices is the one that makes tool-boundary removal
+    worth more than its character count suggests. Text removed before it
+    enters the context is written to the prompt cache once and then never
+    re-read, and this corpus re-reads each cached token
+    ``cache_read / cache_write`` times on average. Removing a character
+    once therefore avoids one write plus that many reads.
+    """
+    cache_write_tokens = tokens["cache_write"]
+    cache_read_tokens = tokens["cache_read"]
+    denominator = cost["total"]
+    if chars_avoided <= 0 or cache_write_tokens <= 0 or denominator <= 0:
+        return None
+    write_rate = cost["cache_write"] / cache_write_tokens
+    read_rate = cost["cache_read"] / cache_read_tokens if cache_read_tokens else 0.0
+    multiplier = cache_read_tokens / cache_write_tokens
+    low_credit, high_credit = REREAD_CREDIT_BOUNDS
+    credited_low = multiplier * low_credit
+    credited_high = multiplier * high_credit
+    low_chars, high_chars = CHARS_PER_TOKEN_BOUNDS
+    # Denser tokens mean fewer of them, so the *upper* characters-per-token
+    # bound produces the *lower* cost. Both uncertainties are carried into
+    # the same band: holding the re-read term exact while banding only the
+    # token count would imply a precision the dominant input does not have.
+    tokens_high = chars_avoided / low_chars
+    tokens_low = chars_avoided / high_chars
+    cost_low = tokens_low * (write_rate + credited_low * read_rate)
+    cost_high = tokens_high * (write_rate + credited_high * read_rate)
+    return {
+        "basis": ESTIMATE_BASIS,
+        "chars_avoided": chars_avoided,
+        "chars_per_token_low": low_chars,
+        "chars_per_token_high": high_chars,
+        "tokens_removed_low": round(tokens_low, 6),
+        "tokens_removed_high": round(tokens_high, 6),
+        "cache_reread_multiplier": round(multiplier, 6),
+        "reread_credited_low": round(credited_low, 6),
+        "reread_credited_high": round(credited_high, 6),
+        "effective_cache_write_usd_per_token": round(write_rate, 12),
+        "effective_cache_read_usd_per_token": round(read_rate, 12),
+        "avoided_cost_usd_low": round(cost_low, 6),
+        "avoided_cost_usd_high": round(cost_high, 6),
+        "avoided_share_pct_low": round(100.0 * cost_low / denominator, 6),
+        "avoided_share_pct_high": round(100.0 * cost_high / denominator, 6),
+        "denominator_usd": round(denominator, 6),
+    }
+
+
 def build_report(composition: Composition) -> SpendReport:
     """Turn a join into the content-free payload a report serializes."""
     matched = composition.matched
     priced = composition.priced
     activity = codec_activity(composition)
+    matched_tokens = _tokens(matched, composition)
+    matched_cost = _cost(composition.modelled_cost(matched))
     payload: dict[str, Any] = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "laconic_version": __version__,
@@ -231,6 +352,12 @@ def build_report(composition: Composition) -> SpendReport:
         "root_sessions": sum(1 for entry in priced if not entry.nested),
         "nested_sessions": sum(1 for entry in priced if entry.nested),
         "sessions_without_priced_turns": composition.sessions_without_priced_turns,
+        # Claude Code reports token counters but no per-turn cost, so the
+        # host-reported total covers only part of the corpus. Counting the
+        # gap keeps a partial sum from reading as a whole one.
+        "priced_sessions_without_host_cost": sum(
+            1 for entry in priced if not entry.reports_host_cost
+        ),
         "codec_active_sessions_without_priced_turns": sum(
             1 for entry in matched if not entry.turns
         ),
@@ -243,8 +370,8 @@ def build_report(composition: Composition) -> SpendReport:
         "corpus_cost": _cost(composition.modelled_cost()),
         "corpus_shares": _shares(composition.modelled_cost()),
         "corpus_host_cost_usd": composition.host_cost_usd(),
-        "matched_tokens": _tokens(matched, composition),
-        "matched_cost": _cost(composition.modelled_cost(matched)),
+        "matched_tokens": matched_tokens,
+        "matched_cost": matched_cost,
         "matched_shares": _shares(composition.modelled_cost(matched)),
         "matched_host_cost_usd": composition.host_cost_usd(matched),
         "codec": {
@@ -265,11 +392,35 @@ def build_report(composition: Composition) -> SpendReport:
             for session in sorted(matched, key=lambda entry: session_hash(entry.session_id))
         ],
         "limitations": list(LIMITATIONS),
+        # Always present, `None` when the corpus cannot support the model.
+        # An absent key would make the schema optional; a zero would read as
+        # "the codec saved nothing" rather than "this corpus cannot say".
+        "estimate": _estimate(matched_tokens, matched_cost, activity.chars_avoided),
     }
     return SpendReport(payload=payload)
 
 
 _LIMITATION_PROSE: Final = {
+    "host_reported_cost_covers_only_hosts_that_report_one": (
+        "The host-reported total covers only sessions whose host records a "
+        "per-turn cost. Claude Code records token counters but no cost, so its "
+        "sessions contribute tokens and modelled cost while contributing nothing "
+        "to that total."
+    ),
+    "avoided_cost_is_modelled_from_assumptions_and_is_not_a_measurement": (
+        "The avoided-cost estimate is a model, not a measurement. It rests on "
+        "unmeasured assumptions -- characters per token, how much of the corpus's "
+        "cache re-read rate removed tokens would really have seen, and that the "
+        "removed text would have been cached at all -- and is reported as a band "
+        "because of them. No session was ever run without the codec to check it "
+        "against."
+    ),
+    "avoided_cost_assumes_removed_text_would_have_been_cached_and_re_read": (
+        "The estimate assumes removed text would have been written to the prompt "
+        "cache once and re-read at the corpus's own measured rate. Text removed from "
+        "a turn that was never followed by another turn would have been re-read "
+        "fewer times, and is overcounted by that assumption."
+    ),
     "single_arm_corpus_every_session_ran_with_the_codec_enabled": (
         "Single-arm corpus. Every session measured here ran with the codec enabled."
     ),
@@ -326,6 +477,62 @@ def _split_lines(title: str, cost: dict[str, float], shares: dict[str, float] | 
     return lines
 
 
+def _estimate_lines(estimate: dict[str, Any] | None) -> list[str]:
+    """Render the avoided-cost band, or say plainly why there is none."""
+    if estimate is None:
+        return [
+            "",
+            "## Modelled cost avoided",
+            "",
+            "Not estimated: this corpus has no removed characters or no cached "
+            "tokens to price them against. That is not a zero; it is a corpus "
+            "that cannot answer the question.",
+            "",
+        ]
+    return [
+        "",
+        "## Modelled cost avoided",
+        "",
+        "**A model, not a measurement.** No session ran without the codec, so "
+        "this is what the removed characters *would have* cost, not an observed "
+        "saving. It is a band because more than one input is assumed.",
+        "",
+        f"- **{_usd(estimate['avoided_cost_usd_low'])} to "
+        f"{_usd(estimate['avoided_cost_usd_high'])}** avoided, against a modelled "
+        f"{_usd(estimate['denominator_usd'])} for the same sessions",
+        f"- **{_pct(estimate['avoided_share_pct_low'])} to "
+        f"{_pct(estimate['avoided_share_pct_high'])}** of that bill",
+        "",
+        "How it is derived:",
+        "",
+        f"- Measured: {estimate['chars_avoided']:,} characters never entered the context.",
+        f"- Assumed: {estimate['chars_per_token_low']:g} to "
+        f"{estimate['chars_per_token_high']:g} characters per token, giving "
+        f"{estimate['tokens_removed_low']:,.0f} to "
+        f"{estimate['tokens_removed_high']:,.0f} tokens.",
+        f"- Measured: each cached token in this corpus was re-read "
+        f"{estimate['cache_reread_multiplier']:,.1f} times. Text removed at the "
+        "tool boundary is written to the cache once and re-read never, so removal "
+        "compounds across a session instead of saving once.",
+        f"- Assumed: removed tokens see {estimate['reread_credited_low']:,.1f} to "
+        f"{estimate['reread_credited_high']:,.1f} of those re-reads. The corpus "
+        "average is dominated by first-turn content re-read every turn; tool "
+        "output arrives later and is re-read less, so the low end credits what a "
+        "result arriving at a random point in a session would see. This term is "
+        "most of the price, which is why it is banded rather than held exact.",
+        "- Assumed: the removed text would have been cached at all, and priced at "
+        "this corpus's single modelled cache-write rate. A provider's minimum "
+        "cacheable size and its separate cache lifetimes are not modelled.",
+        "- Measured: the per-token cache-write and cache-read prices are divided "
+        "out of this corpus's own cost and tokens, not taken from a price table.",
+        "",
+        "The denominator is the modelled cost of the same sessions, so both sides "
+        "of the percentage come from one pricing model. Comparing a modelled "
+        "saving against a host-reported bill would mix two.",
+        "",
+    ]
+
+
 def render_markdown(report: SpendReport) -> str:
     """Render the report deterministically as Markdown."""
     payload = report.payload
@@ -369,7 +576,9 @@ def render_markdown(report: SpendReport) -> str:
         "Whole corpus (laconic.costs)", payload["corpus_cost"], payload["corpus_shares"]
     )
     lines += [
-        f"Host-reported total for the same turns: {_usd(payload['corpus_host_cost_usd'])}.",
+        f"Host-reported total for the same turns: {_usd(payload['corpus_host_cost_usd'])} "
+        f"(covering all but {payload['priced_sessions_without_host_cost']} priced "
+        "sessions, whose host reports no cost).",
         "",
     ]
     lines += _split_lines(
@@ -392,6 +601,7 @@ def render_markdown(report: SpendReport) -> str:
         "Counted over every session with a runtime ledger, including any that "
         "recorded no billable turn.",
     ]
+    lines += _estimate_lines(payload["estimate"])
     if payload["unpriced_models"]:
         lines += [
             "## Models with no published list price",
