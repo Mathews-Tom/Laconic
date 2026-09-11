@@ -80,7 +80,9 @@ class ObservationCodec:
         self._command = CommandEncoder(
             ledger, keep_head=keep_head, keep_tail=keep_tail, max_errors=max_errors
         )
-        self._search = SearchEncoder(ledger)
+        self._search = SearchEncoder(
+            ledger, keep_head=keep_head, keep_tail=keep_tail, max_errors=max_errors
+        )
         self._fallback = FallbackEncoder(
             ledger, keep_head=keep_head, keep_tail=keep_tail, max_errors=max_errors
         )
