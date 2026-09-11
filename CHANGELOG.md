@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-09-12
+
 ### Changed
 
 - `laconic status` now prints the modelled cost band as its own headed block rather than as one more indented counter. It was the only line a non-operator cares about and it read as another diagnostic.
@@ -184,7 +186,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Initial packaging, lint, strict typing, test, and CI surface, with an importable `laconic` package and a `laconic` console script exposing `--version` and `--help`.
 
-[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Mathews-Tom/Laconic/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/Mathews-Tom/Laconic/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Mathews-Tom/Laconic/compare/v0.9.0...v0.9.1
