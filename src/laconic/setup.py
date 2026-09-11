@@ -146,8 +146,9 @@ def detect_hosts(
             codec=False,
             observe=True,
             detail=(
-                "hooks record content-free receipts after a tool returns; "
-                "nothing is compressed and no token is saved"
+                "setup installs content-free receipt hooks only; the "
+                "transforming codec hook is a separate opt-in "
+                "(docs/claude-code-codec.md)"
                 if claude_code
                 else "not detected (no .claude directory in this project or your home)"
             ),
