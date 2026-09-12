@@ -1,8 +1,10 @@
 # Laconic M18 Beta Qualification — Operator Runbook
 
-M18 (`.docs/DEVELOPMENT_PLAN.md` §6; refocus design §§9–10) qualifies the
-OMP runtime candidate against real, ordinary OMP sessions before the
-`v0.9.0` beta may release. This runbook is the exact operator sequence for
+M18 (`.docs/DEVELOPMENT_PLAN.md` §6; refocus design §§9–10) qualifies an
+OMP runtime candidate against real, ordinary OMP sessions. It originally
+gated the `v0.9.0` beta, which has since released; this remains the
+procedure for re-qualifying any candidate whose engine, ledger, codec,
+protocol, or extension asset has changed. This runbook is the exact operator sequence for
 running that campaign with `python -m laconic.beta`: freezing the contract,
 capturing evidence, and generating the report that decides GO, NO-GO, or
 `human_review_required`.
@@ -26,10 +28,11 @@ test, and which of the 10 sessions runs against which of the 3 repositories.
 Build the candidate wheel (§4) first, then freeze both before running a
 single session:
 
-```text
+```bash
 uv build
+CANDIDATE=$(ls dist/laconic-*-py3-none-any.whl)
 python -m laconic.beta manifest generate \
-  --candidate-wheel dist/laconic-0.8.0-py3-none-any.whl \
+  --candidate-wheel "$CANDIDATE" \
   --out .laconic/beta/manifest.json \
   /path/to/repo-one /path/to/repo-one /path/to/repo-one /path/to/repo-one \
   /path/to/repo-two /path/to/repo-two /path/to/repo-two \
@@ -99,7 +102,7 @@ python -m laconic.beta receipt derive \
   --session '<real-omp-session-id>' \
   --manifest .laconic/beta/manifest.json \
   --omp-version 18.1.10 \
-  --candidate-wheel dist/laconic-0.8.0-py3-none-any.whl \
+  --candidate-wheel "$CANDIDATE" \
   --slot 1 \
   --repository /path/to/repo-one \
   --clean-shutdown \
@@ -127,14 +130,19 @@ python -m laconic.beta receipt validate .laconic/beta/receipts/slot-01.json
 ## 4. The candidate-wheel workflow
 
 The manifest and every receipt bind the exact SHA-256 of one candidate
-distribution. M18 qualifies the current `0.8.0` build; the version bump to
-`v0.9.0` happens at release preparation, after this campaign returns `go`, so
-the artifact under test is a `0.8.0` wheel:
+distribution. The version bump happens at release preparation, after the
+campaign returns `go`, so the artifact under test always carries the
+*current* version rather than the one being prepared. The original M18 run
+qualified the `0.8.0` wheel and released as `v0.9.0`; a run today qualifies
+whatever `uv build` produces, so derive the filename instead of typing it:
 
-```text
+```bash
 uv build
-ls dist/laconic-0.8.0-py3-none-any.whl
+CANDIDATE=$(ls dist/laconic-*-py3-none-any.whl)
+echo "$CANDIDATE"
 ```
+
+`$CANDIDATE` is set the same way in §1, so a shell that ran §1 already has it.
 
 Build it once, freeze it into the manifest (§1), and reuse that exact file
 for every session and every install/uninstall exercise. A report refuses to

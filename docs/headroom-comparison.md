@@ -2,7 +2,7 @@
 
 Laconic and [Headroom](https://github.com/headroomlabs-ai/headroom) both reduce context sent to language models, but they operate at different boundaries and optimize for different outcomes.
 
-**Headroom is a broad context-compression platform. Laconic is a narrow coding-agent runtime codec.** Headroom provides libraries, a provider proxy, MCP tools, agent wrappers, multiple compressors, cache-aware request handling, memory, and optional output shaping. Laconic integrates directly with OMP's tool-result lifecycle and changes only eligible tool observations, backed by durable exact recovery.
+**Headroom is a broad context-compression platform. Laconic is a narrow coding-agent runtime codec.** Headroom provides libraries, a provider proxy, MCP tools, agent wrappers, multiple compressors, cache-aware request handling, memory, and optional output shaping. Laconic integrates directly with a host's tool-result lifecycle — OMP through a native extension, Claude Code through a transforming `PostToolUse` hook — and changes only eligible tool observations, backed by durable exact recovery.
 
 This comparison uses Laconic 0.12.0 and Headroom 0.37.0. It describes product contracts and shipped defaults, not a measured head-to-head performance result.
 
@@ -11,10 +11,11 @@ This comparison uses Laconic 0.12.0 and Headroom 0.37.0. It describes product co
 | Dimension | Laconic | Headroom 0.37.0 |
 | --- | --- | --- |
 | Product boundary | Runtime codec for tool observations in an existing coding agent | General context-compression layer for agents and applications |
-| Primary integration | Native OMP extension at the `tool_result` boundary | Python and TypeScript libraries, local provider proxy, MCP server, and agent wrappers |
+| Primary integration | Native OMP extension at the `tool_result` boundary, plus a Claude Code transforming `PostToolUse` hook; both drive one canonical Python engine | Python and TypeScript libraries, local provider proxy, MCP server, and agent wrappers |
 | OMP path | Intercepts OMP tool results without changing provider configuration | `headroom wrap omp` redirects OMP's Anthropic provider endpoint through Headroom's local proxy |
 | Provider relationship | Provider- and model-neutral inside OMP | Supports multiple providers overall; its OMP wrapper is Anthropic-specific |
-| Default coding inputs | Successful single-text `read`, `bash`, `grep`, and `glob` results | Broad content routing; the default coding profile protects file reads from lossy compression |
+| Host coverage | OMP and Claude Code have shipped adapters; Codex has none, and Laconic says so rather than degrading silently | Broad client, framework, and provider coverage |
+| Default coding inputs | Successful single-text `read`, `bash`, `grep`, and `glob` results on OMP; `Bash` and `Read` on Claude Code, which exposes no `Grep`/`Glob` tool | Broad content routing; the default coding profile protects file reads from lossy compression |
 | File reads | Structural outline plus the requested span, with exact full or span recovery | Kept byte-exact by the default coding profile because coding agents patch exact source |
 | Recovery | Owner-only, namespaced session ledger retained until explicit purge | Hash-keyed CCR cache with a default 30-minute TTL and automatic capacity eviction |
 | Replacement rule | Emit only when the complete recovery-bearing envelope is strictly smaller | Compressor- and profile-specific policies, with passthrough when compression is unsuitable |
@@ -22,6 +23,7 @@ This comparison uses Laconic 0.12.0 and Headroom 0.37.0. It describes product co
 | Prompt-cache policy | Does not rewrite prior history and makes no cache-savings claim | Cache mode preserves an older prefix and compresses the newest eligible delta |
 | Operator controls | Install, status, pause, resume, exact expansion, uninstall, and explicit purge | Deploy, wrap, unwrap, doctor, performance reporting, dashboard, and configuration profiles |
 | Data handling | Laconic itself sends no telemetry or observations to a Laconic service | Compression and recovery are local; an anonymous content-free session beacon is enabled by default unless disabled |
+| Cost reporting | Read-only local spend composition priced through a three-layer model-price registry (3,134 models bundled offline, refreshable by explicit command). The avoided-cost figure is labelled `modelled_not_measured` in code and withholds its own dollar figures when more than 25% of the underlying cost rests on unpublished prices | Performance reporting and a dashboard |
 | Evidence posture | Publishes its safety qualification and reports character reduction without relabeling it as token or cost savings | Publishes offline token benchmarks and live-provider demonstrations |
 
 ## Where Laconic excels

@@ -44,7 +44,7 @@ The first adapter transforms only successful, exactly-one-text-chunk results fro
 
 The engine writes the exact raw observation before it may emit a replacement. It constructs the complete model-visible envelope, including the recovery reference, and emits only when that envelope is strictly smaller than the raw result. Internal handles such as `F3` remain short and session-scoped; model-visible references include the source OMP session, for example `<omp-session-id>/F3:61-94`.
 
-Thin adapters share this canonical engine. OMP is first. Claude Code requires a separate post-beta adapter design. MCP, action rewriting, residency/history compaction, and hosted services are deferred.
+Thin adapters share this canonical engine. OMP was first; the Claude Code adapter shipped in 0.11.0 as `src/laconic/runtime/claude_code.py` and drives the same `RuntimeSession` rather than forking the decision. MCP, action rewriting, residency/history compaction, and hosted services are deferred.
 
 ---
 ## 2. Component Design
@@ -152,9 +152,11 @@ class Ledger:
 
 Handles remain short (`F3`, `B7`, `S2`) inside one ledger. A runtime envelope prefixes the handle with its source OMP session so references remain unambiguous after resume or full fork: `<omp-session-id>/F3[:first-last]`.
 
-### 2.2 Observation codec (`src/laconic/codec/observe.py`)
+### 2.2 Observation codec (`src/laconic/codec/`)
 
 Attacks 63.24% of context volume and ~38.1% of spend. One encoder per tool shape, dispatched by tool name, with a safe fallback.
+
+`observe.py` is the dispatch layer only. The concrete encoders live beside it — `encoders/file.py` defines `FileEncoder`, `encoders/command.py` defines `CommandEncoder`, and `outline.py` defines the `Outliner` protocol with its tree-sitter and fallback implementations. The listing below is the dispatch contract those classes satisfy, not the file they are declared in.
 
 ```python
 from __future__ import annotations
@@ -369,12 +371,20 @@ Action equivalence is judged structurally first — same tool, same target, same
 The pre-1.0 command surface now reserves top-level verbs for the runtime product:
 
 ```text
-laconic install omp
-laconic uninstall omp
+laconic setup [--dry-run|--verify-only]
+laconic install omp|claude-code
+laconic uninstall omp|claude-code
 laconic status
+laconic savings
+laconic pricing show|update
 laconic purge --session ID|--older-than DURATION
 laconic expand SESSION/HANDLE[:FIRST-LAST]
 ```
+
+`setup` detects which hosts are present, installs the adapter each one
+supports, and reports whether the codec has since recorded a real decision.
+It is the onboarding path; the per-host `install` verbs remain for installing
+exactly one adapter.
 
 Session-local engine control lives inside OMP:
 
@@ -387,11 +397,49 @@ Session-local engine control lives inside OMP:
 Offline evaluation and released diagnostics moved under explicit namespaces:
 
 ```text
-laconic research measure|replay|gates|expand|view|study|k1 ...
+laconic research measure|replay|gates|expand|view|study|spend|k1 ...
 laconic diagnostics observe ...
 ```
 
+`research spend` takes a nested verb — `laconic research spend report` — and
+is not invocable on its own.
+
 There are no duplicate compatibility aliases. `laconic expand` resolves runtime namespaced references; `laconic research expand` resolves fixture-corpus handles. `docs/omp-runtime.md` is the operator guide.
+
+### 2.8 Price registry (`src/laconic/pricing/`)
+
+Every dollar figure this project reports resolves a per-model list price
+through one seam, `laconic.costs.price_for`, backed by three layers in
+precedence order:
+
+| Layer | Source | Purpose |
+| --- | --- | --- |
+| Local override | `model-prices-override.json` in the runtime data directory | Models no public registry carries — a synthetic fixture model, or a floating `-latest` alias naming no concrete priced model |
+| Downloaded registry | Written only by `laconic pricing update` | Refreshing prices without waiting for a release |
+| Bundled snapshot | `src/laconic/pricing/snapshot.json`, pinned to upstream commit `71f45683d73d741db4e8c0801045b75296ee7b54` | Keeps the default path entirely offline; prices 3,134 models |
+
+`laconic pricing update` is the only code in Laconic that reaches the
+network, and only on explicit invocation. The bundled snapshot is packaging
+data and is read guarded: a missing one degrades every model to the fallback
+price rather than crashing, which raises the report's
+`fallback_priced_cost_share_pct` to 100% and makes the quotable-dollars gate
+withhold the figures. A loud failure is deliberate.
+
+There is no second price source. A hand-written table used to sit in front of
+this registry and win; two of its seven entries had gone stale, and because
+it won, the stale price was the one every published figure used (`H-139`).
+The registry is now the only source, and the override layer is where a model
+it does not carry belongs.
+
+The spend report that consumes these prices serializes at schema version 2.
+Its `host_reporting_cost` block prices exactly the sessions whose host
+records a per-turn cost, so that figure and `corpus_host_cost_usd` cover one
+set; `corpus_cost` covers every priced session and is the coverage
+denominator, not a comparison. `matched_sessions_without_host_cost` carries
+the same certificate for the matched pair. Every serialized key is
+independently shape-checked by `laconic.spend.privacy`, whose allowlist is
+derived by set difference so a new key with no shape group fails loudly
+instead of reaching an artifact uncertified.
 
 ---
 ## 3. Integration
@@ -542,7 +590,8 @@ Version 0.8.0 already contained the canonical Python codec, ledger, replay, rend
 
 ```text
 src/laconic/runtime/             # protocol, references, decisions, session engine, stdio
-src/laconic/integrations/omp/    # packaged OMP extension asset and owned installer support
+src/laconic/runtime/omp/         # packaged OMP extension asset (laconic.ts)
+src/laconic/runtime/omp_installer.py   # owned installer support
 tests/test_runtime_*.py          # protocol, storage, decisions, installer, and CLI contracts
 ```
 

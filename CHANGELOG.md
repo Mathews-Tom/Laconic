@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- Documentation audit against the 0.12.0 codebase. Corrected the committed fixture's K4 codec-overhead figure, documented as **26.8 tokens** where the harness reports **23.56** — verified identical at the pre-0.12.0 commit, so this was a pre-existing error and not a consequence of the price change. Removed two claims that Claude Code support was still future work: it shipped in 0.11.0, and the same architecture document's own maturity boundary nine lines below one of them already said 0.12.0 packages it. Corrected a package path that never existed (`src/laconic/integrations/omp/`), an architecture section attributing `FileEncoder` and `CommandEncoder` to the dispatch module that only imports them, and a Claude Code table claiming `numLines` is preserved where the adapter deliberately recounts it. Replaced a hardcoded `laconic-0.8.0` candidate wheel in the beta runbook, which made its own documented `ls` fail for any reader following the procedure today.
+- Documented the price registry as an architecture component: its three resolution layers, the pinned upstream snapshot commit, and the spend report's schema-2 host-cost fields. The controlled-spend design's claim that `laconic.costs` would not be repriced is now recorded as paid — and H-98's diagnosis of the stale `claude-sonnet-5` entry is confirmed by the registry and by OMP's own per-turn cost agreeing on the same rates it had pinned from Anthropic's published sheet.
+- The Headroom comparison never mentioned Claude Code, understating Laconic's shipped host coverage, and had no row for the spend report or the price registry. Both added.
+
 ## [0.12.0] — 2026-09-13
 
 ### Added
