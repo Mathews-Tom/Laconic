@@ -77,7 +77,7 @@ def test_the_report_validates_and_carries_every_limitation() -> None:
     validate_report_json(payload)
 
     assert tuple(payload["limitations"]) == LIMITATIONS
-    assert len(LIMITATIONS) == 10
+    assert len(LIMITATIONS) == 11
 
 
 def test_the_rendering_is_byte_identical_across_two_runs() -> None:
@@ -563,3 +563,22 @@ def test_an_all_reporting_corpus_is_not_told_its_totals_are_incomparable() -> No
     assert "compare directly" in rendered
     # ...and the count that would render as "1 sessions" agrees with its noun.
     assert "1 priced sessions" not in rendered
+
+
+def test_the_report_discloses_the_cache_lifetime_it_does_not_model() -> None:
+    """A measured, signed, deliberately uncorrected modelling gap.
+
+    Anthropic bills a one-hour cache write at twice the input price where a
+    five-minute write bills at 1.25x, and `laconic.costs` charges one rate
+    for both. On the development corpus 65.4% of cache-write tokens carry a
+    one-hour lifetime, so the omission is material -- and it can only make a
+    modelled figure *smaller* than the provider's, which is the opposite
+    direction from the gap against the host that prompted measuring it. The
+    report has to say so rather than leave a reader to assume every billable
+    distinction is modelled.
+    """
+    rendered = render_markdown(build_report(join([_usage(MATCHED)], [_decisions(MATCHED)])))
+
+    assert "cache_writes_are_priced_at_one_rate_although_lifetimes_bill_differently" in LIMITATIONS
+    assert "one-hour cache write at twice the input price" in rendered
+    assert "under-prices, never over-prices" in rendered
