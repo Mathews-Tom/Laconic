@@ -27,9 +27,12 @@ recorded. Providers return token counters, not dollars, so that figure is
 the host's own price table applied to real counters -- an external input,
 reported with its provenance. ``modelled_cost`` is :mod:`laconic.costs`
 applied to those same counters, which is the single pricing convention this
-repository owns. They differ when a model is absent from
-:data:`laconic.costs.PRICING`, and :attr:`Composition.unpriced_models` names
-every model for which that happened.
+repository owns. They differ when a model is absent from every layer of the
+price registry :mod:`laconic.pricing.registry` resolves, and
+:attr:`Composition.unpriced_models` names every model for which that
+happened. They also differ wherever the host's own table and the registry
+disagree, which on a real corpus they do: a host may charge a rate no list
+price publishes.
 """
 
 from __future__ import annotations

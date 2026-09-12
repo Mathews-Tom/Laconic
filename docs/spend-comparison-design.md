@@ -6,7 +6,7 @@
 
 `laconic research spend report` measures composition: of the money real sessions actually cost, how much went to uncached input, cache reads, cache writes, and output, and what the codec did in those same sessions.
 
-It cannot measure savings, and no refinement of it can. Every session it reads ran with the codec enabled. There is no observation anywhere in that data of the same work done without the codec, so there is no quantity to subtract. This is not a precision problem that more sessions would fix; it is the absence of a comparison arm. The only bound on a general savings claim remains the committed K1 fixture's 8.53%, and that fixture is a deterministic gate-harness check, not representative evidence.
+It cannot measure savings, and no refinement of it can. Every session it reads ran with the codec enabled. There is no observation anywhere in that data of the same work done without the codec, so there is no quantity to subtract. This is not a precision problem that more sessions would fix; it is the absence of a comparison arm. The only bound on a general savings claim remains the committed K1 fixture's 8.41%, and that fixture is a deterministic gate-harness check, not representative evidence.
 
 A comparison therefore requires generating new data under a design that produces all three controlled arms. That is the subject of this document.
 

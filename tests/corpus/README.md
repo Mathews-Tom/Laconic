@@ -67,12 +67,12 @@ The corpus reproduces the *shape* of the real measurement in `docs/overview.md` 
 
 | Property | `docs/overview.md` §2 | This fixture |
 |---|---:|---:|
-| Cache reads, share of spend | 60.3% | 58.7% |
-| Cache writes | 26.7% | 27.6% |
-| Output tokens | 11.3% | 11.2% |
-| Uncached input | 1.7% | 2.4% |
+| Cache reads, share of spend | 60.3% | 57.4% |
+| Cache writes | 26.7% | 28.5% |
+| Output tokens | 11.3% | 11.6% |
+| Uncached input | 1.7% | 2.6% |
 | Turns emitting zero prose | 80.6% | 90.4% |
-| Human-facing prose, share of spend | 2.30% | 2.18% |
+| Human-facing prose, share of spend | 2.30% | 2.25% |
 | Largest observation channel | `Read` | `Read` |
 
 Reads are whale-distributed here as they are in real sessions: a small number of turns pull in most of the observation volume.

@@ -156,9 +156,9 @@ def test_measure_reports_the_headline_prose_figures(
     """The project's headline number, pinned to tests/corpus/README.md."""
     assert main(["research", "measure", str(CORPUS_DIR)]) == EXIT_OK
     out = capsys.readouterr().out
-    assert "Output share of spend                        11.25%" in out
+    assert "Output share of spend                        11.57%" in out
     assert "Prose share of emitted output                19.41%" in out
-    assert "HUMAN-FACING PROSE SHARE OF SPEND             2.18%" in out
+    assert "HUMAN-FACING PROSE SHARE OF SPEND             2.25%" in out
 
 
 def test_measure_on_a_corpus_without_billable_tokens_exits_non_zero(

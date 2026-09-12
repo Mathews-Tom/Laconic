@@ -7,11 +7,11 @@
     "user_prompts": 1518
   },
   "cost_usd": {
-    "cache_read": 5.7176588,
-    "cache_write": 2.693155,
-    "output": 1.0954949999999999,
-    "total": 9.7403088,
-    "uncached_input": 0.23399999999999999
+    "cache_read": 4.1495391999999995,
+    "cache_write": 2.059295,
+    "output": 0.836905,
+    "total": 7.2317392,
+    "uncached_input": 0.186
   },
   "records": 265,
   "schema_version": 1,

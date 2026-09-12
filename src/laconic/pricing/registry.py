@@ -7,9 +7,12 @@ estimate's per-token rates — which are divided out of that same cost —
 rested on prices nobody published.
 
 Hand-maintaining a larger table relocates the problem rather than solving
-it: it goes stale exactly when nobody has time to update it. This module
-instead resolves prices from a registry with three layers, most specific
-first:
+it: it goes stale exactly when nobody has time to update it. The seven
+entries proved that on their own -- two of them had drifted, and because
+they sat in front of this module and won, the drifted price was the one
+every published figure used. They are gone; this module is now the only
+source. It resolves prices from a registry with three layers, most
+specific first:
 
 1. a **local override** file, for models no public registry knows — this
    corpus has four, including a synthetic fixture model and a floating

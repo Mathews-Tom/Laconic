@@ -103,7 +103,7 @@ uv run laconic research gates --corpus tests/corpus --format json
 laconic --help
 ```
 
-The committed fixture reports K1 net savings of 8.53% against its pre-registered 15% research threshold. It validates the gate machinery but is not representative deployment evidence. That result does not block the bounded OMP beta, and the beta will not claim general token, cost, cache, or behavior savings from character reduction. The qualification campaign separately measured 35.84% character reduction across ten agent-driven read-heavy investigation sessions; that figure describes that workload only, and no savings threshold gates the beta. See the "Beta qualification result" section of [`docs/omp-runtime.md`](docs/omp-runtime.md) for how the campaign was produced and what it does not establish.
+The committed fixture reports K1 net savings of 8.41% against its pre-registered 15% research threshold. It validates the gate machinery but is not representative deployment evidence. That result does not block the bounded OMP beta, and the beta will not claim general token, cost, cache, or behavior savings from character reduction. The qualification campaign separately measured 35.84% character reduction across ten agent-driven read-heavy investigation sessions; that figure describes that workload only, and no savings threshold gates the beta. See the "Beta qualification result" section of [`docs/omp-runtime.md`](docs/omp-runtime.md) for how the campaign was produced and what it does not establish.
 
 ## Product roadmap
 

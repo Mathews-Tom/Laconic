@@ -59,17 +59,10 @@ class ModelPrice:
         return self.input_per_mtok * CACHE_WRITE_MULTIPLIER
 
 
-#: Published list prices. Unknown models fall back to ``DEFAULT_PRICE`` rather
-#: than being dropped, so an unrecognised model still shows up in the bill.
-PRICING: Mapping[str, ModelPrice] = {
-    "claude-opus-4-8": ModelPrice(5.0, 25.0),
-    "claude-opus-4-6": ModelPrice(5.0, 25.0),
-    "claude-sonnet-5": ModelPrice(3.0, 15.0),
-    "claude-sonnet-4-6": ModelPrice(3.0, 15.0),
-    "claude-sonnet-4-5": ModelPrice(3.0, 15.0),
-    "claude-fable-5": ModelPrice(1.0, 5.0),
-    "claude-haiku-4-5": ModelPrice(1.0, 5.0),
-}
+#: The price every model no registry layer knows is billed at. Pricing an
+#: unrecognised model at a guess keeps it in the bill rather than dropping
+#: it, and :func:`unpriced_models` names every model this happened to so
+#: the guess is never mistaken for a published figure.
 DEFAULT_PRICE = ModelPrice(3.0, 15.0)
 
 
@@ -117,16 +110,23 @@ def reset_registry_cache() -> None:
 
 
 def price_for(model: str) -> ModelPrice:
-    """Return the list price for ``model``.
+    """Return the list price for ``model``, resolved through the registry.
 
-    The hand-written :data:`PRICING` table still wins, because it is the
-    project's own reviewed statement about the models it cares most about.
-    Everything else resolves through the registry, and only a model no
-    layer knows falls back to Sonnet rates.
+    The registry is the only source. A second hand-written table used to
+    sit in front of it and win, and it silently priced two models wrong:
+    ``claude-sonnet-5`` at $3/$15 where both the registry and the host's
+    own per-turn accounting say $2/$10, and ``claude-fable-5`` at a tenth
+    of its real price. On the development corpus that one shadow added
+    $2,331.82 of modelled spend -- more than the entire gap against the
+    host's own figure -- while looking like the project's most carefully
+    reviewed prices.
+
+    Two price sources for one model is the defect, not the two wrong
+    entries: whichever one is not refreshed goes stale, and the stale one
+    was the one that won. Models no public registry carries belong in the
+    override layer :mod:`laconic.pricing.registry` already resolves, which
+    is refreshable in the same place as everything else.
     """
-    known = PRICING.get(model)
-    if known is not None:
-        return known
     rate = active_registry().get(model)
     if rate is None:
         return DEFAULT_PRICE
@@ -245,7 +245,7 @@ def unpriced_models(usage: Mapping[str, ModelUsage]) -> list[str]:
     mistaken for a published one.
     """
     registry = active_registry()
-    return sorted(model for model in usage if model not in PRICING and registry.get(model) is None)
+    return sorted(model for model in usage if registry.get(model) is None)
 
 
 def session_cost(usage: Mapping[str, ModelUsage]) -> CostBreakdown:
