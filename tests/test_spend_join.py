@@ -200,8 +200,8 @@ def test_a_corpus_with_no_spend_refuses_to_apportion_shares() -> None:
 
 def test_the_hosts_cost_and_laconics_model_are_both_reported() -> None:
     # claude-opus-4-8 is priced identically to what OMP modelled here, so the
-    # two agree; a model absent from PRICING is where they diverge, and that
-    # is what unpriced_models exists to name.
+    # two agree; a model absent from every layer of the price registry is
+    # where they diverge, and that is what unpriced_models exists to name.
     composition = join([_usage(MATCHED, (_turn(),))], [])
 
     assert composition.host_cost_usd() == pytest.approx(composition.modelled_cost().total)

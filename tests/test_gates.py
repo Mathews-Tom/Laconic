@@ -161,10 +161,17 @@ def test_k1_measures_the_committed_corpus_below_the_kill_threshold() -> None:
     `.docs/DEVELOPMENT_PLAN_HISTORY.md` H-25: savings are concentrated in
     five whale reads out of 125 turns, and the honest number is a kill,
     not a pass. This pins that number so a change to the committed
-    fixtures or the measurement itself is caught."""
+    fixtures or the measurement itself is caught.
+
+    8.53% until the price registry became the only price source. The
+    fixture mixes `claude-sonnet-5` with `claude-opus-4-8`, and the
+    removed hand-written table priced the first 50% above what both the
+    registry and the host's own per-turn accounting charge. Correcting it
+    reweighs the mix, so the percentage moves. The verdict does not.
+    """
     result = net_cost.measure([CORPUS_DIR])
     assert result.gate == "net-cost"
-    assert result.value == pytest.approx(8.53, abs=0.01)
+    assert result.value == pytest.approx(8.41, abs=0.01)
     assert result.verdict is GateVerdict.KILL
 
 

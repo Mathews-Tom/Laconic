@@ -6,19 +6,53 @@ import pytest
 
 from laconic.costs import (
     DEFAULT_PRICE,
-    PRICING,
     CostBreakdown,
     CostShares,
     ModelUsage,
     ZeroCostError,
+    active_registry,
     price_for,
     session_cost,
     unpriced_models,
 )
 
 
-def test_known_model_uses_its_own_price() -> None:
-    assert price_for("claude-opus-4-8") == PRICING["claude-opus-4-8"]
+def test_a_registry_price_is_never_shadowed_by_a_second_source() -> None:
+    """The registry is the only price source, structurally.
+
+    A hand-written seven-model table used to sit in front of it and win.
+    It had gone stale on two of its seven entries, and because it won it
+    was the stale price every published figure used -- `claude-sonnet-5`
+    at $3/$15 where both the registry and the host's own per-turn
+    accounting say $2/$10. Two sources for one price is the defect; the
+    wrong entries were only how it surfaced. This fails the moment any
+    second source is reintroduced in front of the registry, for any model,
+    rather than pinning the two entries that happened to be wrong.
+    """
+    registry = active_registry()
+    assert registry.rates, "the bundled snapshot must price something"
+
+    for model, rate in registry.rates.items():
+        price = price_for(model)
+        assert price.input_per_mtok == pytest.approx(rate.input * 1e6), model
+        assert price.output_per_mtok == pytest.approx(rate.output * 1e6), model
+
+
+def test_the_registry_prices_sonnet_5_as_the_host_bills_it() -> None:
+    """The concrete entry the removed table shadowed.
+
+    $2/$10 is what the bundled registry publishes and what OMP's own
+    per-turn cost back-solves to on every one of 57,700 recorded turns.
+    The shadowing table said $3/$15, and this model alone accounted for
+    $2,371.83 of the $2,331.82 the shadow added to the development
+    corpus net of `claude-fable-5`'s $40.01 correction in the other
+    direction -- either figure being more than the whole gap against the
+    host's own accounting.
+    """
+    price = price_for("claude-sonnet-5")
+
+    assert price.input_per_mtok == pytest.approx(2.0)
+    assert price.output_per_mtok == pytest.approx(10.0)
 
 
 def test_unknown_model_falls_back_to_default_price() -> None:

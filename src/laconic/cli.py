@@ -1775,7 +1775,7 @@ def _warn_unpriced_models(paths: Sequence[Path]) -> None:
 
     ``codec="on"`` net cost is a subtraction between a baseline and a
     fixture, potentially priced under two different tables whenever
-    either file's model is unrecognised by :data:`laconic.costs.PRICING`
+    either file's model is absent from every layer of the price registry
     -- including the literal ``"unknown"`` :func:`~laconic.replay.engine.iter_turns`
     substitutes for a missing or non-string ``model`` field. A savings
     figure computed silently across two different price tables is a

@@ -264,7 +264,7 @@ The OMP beta requires at least 10 completed Laconic-enabled sessions across 3 ca
 | K4 | Codec overhead in added input tokens per turn | < 500 | above means structural overhead is excessive |
 | K5 | Exact-match reasoning benchmark, codec on vs off | within 2pp | beyond means the tested representation changes measured accuracy |
 
-The committed fixture validates this machinery and reports its own bounded results. It is not representative product-economics evidence. Its 8.53% K1 result no longer blocks an opt-in runtime beta, and passing the beta gate does not satisfy these research gates.
+The committed fixture validates this machinery and reports its own bounded results. It is not representative product-economics evidence. Its 8.41% K1 result no longer blocks an opt-in runtime beta, and passing the beta gate does not satisfy these research gates.
 
 ---
 

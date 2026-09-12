@@ -91,7 +91,7 @@ Install and remove must be idempotent, preserve unrelated client configuration, 
 Observe receipts do not:
 
 - enable or exercise the OMP codec-transformation surface;
-- change the committed fixture's 8.53% K1 result;
+- change the committed fixture's 8.41% K1 result;
 - prove token, cost, cache, or behavior savings;
 - authorize provider replay, real-session corpus collection, external data, or prospective-capture successors;
 - supply K2 action equivalence, K3 human-study evidence, or the runtime beta's exact-recovery and fail-open proof.

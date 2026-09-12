@@ -49,7 +49,7 @@ LIMITATIONS: Final = (
     "cost_is_modelled_from_token_counters_never_billed_by_a_provider",
     "sessions_are_not_controlled_units_and_are_not_comparable",
     "a_ledger_only_proves_the_codec_ran_not_that_it_covered_the_session",
-    "committed_k1_fixture_8_53_pct_still_bounds_general_savings_claims",
+    "committed_k1_fixture_8_41_pct_still_bounds_general_savings_claims",
     "host_reported_cost_covers_only_hosts_that_report_one",
     "avoided_cost_is_modelled_from_assumptions_and_is_not_a_measurement",
     "avoided_cost_assumes_removed_text_would_have_been_cached_and_re_read",
@@ -486,8 +486,8 @@ _LIMITATION_PROSE: Final = {
         "through contributes all of its spend and almost none of its codec "
         "activity; compare each row's turns against its eligible count."
     ),
-    "committed_k1_fixture_8_53_pct_still_bounds_general_savings_claims": (
-        "The committed K1 fixture's 8.53% remains the only bound on a general "
+    "committed_k1_fixture_8_41_pct_still_bounds_general_savings_claims": (
+        "The committed K1 fixture's 8.41% remains the only bound on a general "
         "savings claim. This report does not move it."
     ),
 }
