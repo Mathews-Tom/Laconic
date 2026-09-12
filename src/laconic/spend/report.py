@@ -30,7 +30,7 @@ from laconic.costs import CostBreakdown, CostShares, ZeroCostError
 from laconic.spend.join import Composition, SessionComposition, codec_activity
 
 #: Bumped whenever a report field is added, removed, or reinterpreted.
-REPORT_SCHEMA_VERSION: Final = 1
+REPORT_SCHEMA_VERSION: Final = 2
 
 #: The default output directory, relative to the working directory. Git-ignored:
 #: a spend report is local evidence about the owner's own work, not a repository
@@ -133,10 +133,15 @@ ALLOWED_REPORT_KEYS: Final = frozenset(
         "corpus_cost",
         "corpus_shares",
         "corpus_host_cost_usd",
+        # The modelled figure `corpus_host_cost_usd` is actually comparable
+        # with: the same sessions, priced two ways. `corpus_cost` covers
+        # sessions the host total structurally cannot.
+        "host_reporting_cost",
         "matched_tokens",
         "matched_cost",
         "matched_shares",
         "matched_host_cost_usd",
+        "matched_sessions_without_host_cost",
         "codec",
         "codec_active_sessions_without_priced_turns",
         "unpriced_models",
@@ -355,6 +360,7 @@ def build_report(composition: Composition) -> SpendReport:
     """Turn a join into the content-free payload a report serializes."""
     matched = composition.matched
     priced = composition.priced
+    host_reporting = composition.host_reporting
     activity = codec_activity(composition)
     matched_tokens = _tokens(matched, composition)
     matched_cost = _cost(composition.modelled_cost(matched))
@@ -383,10 +389,22 @@ def build_report(composition: Composition) -> SpendReport:
         "corpus_cost": _cost(composition.modelled_cost()),
         "corpus_shares": _shares(composition.modelled_cost()),
         "corpus_host_cost_usd": composition.host_cost_usd(),
+        # `corpus_cost` and `corpus_host_cost_usd` do not cover the same
+        # sessions, so their difference is not a pricing disagreement. This
+        # is the modelled total for exactly the sessions the host priced,
+        # and it is the only one of the two that `corpus_host_cost_usd` can
+        # be read against.
+        "host_reporting_cost": _cost(composition.modelled_cost(host_reporting)),
         "matched_tokens": matched_tokens,
         "matched_cost": matched_cost,
         "matched_shares": _shares(composition.modelled_cost(matched)),
         "matched_host_cost_usd": composition.host_cost_usd(matched),
+        # Zero on this corpus, and not guaranteed to stay zero: the codec
+        # installs into Claude Code too. Non-zero means `matched_cost` and
+        # `matched_host_cost_usd` have stopped covering the same sessions.
+        "matched_sessions_without_host_cost": sum(
+            1 for entry in matched if entry.turns and not entry.reports_host_cost
+        ),
         "codec": {
             "sessions": activity.sessions,
             "eligible": activity.eligible,
@@ -481,6 +499,11 @@ def _usd(value: float) -> str:
 
 def _pct(value: float) -> str:
     return f"{value:.2f}%"
+
+
+def _sessions(count: int) -> str:
+    """Render a session count with a noun that agrees with it."""
+    return f"{count} priced session" if count == 1 else f"{count} priced sessions"
 
 
 def _split_lines(title: str, cost: dict[str, float], shares: dict[str, float] | None) -> list[str]:
@@ -620,21 +643,53 @@ def render_markdown(report: SpendReport) -> str:
         "",
     ]
     lines += _split_lines(
-        "Whole corpus (laconic.costs)", payload["corpus_cost"], payload["corpus_shares"]
+        "Whole corpus, every scanned session (laconic.costs)",
+        payload["corpus_cost"],
+        payload["corpus_shares"],
     )
-    lines += [
-        f"Host-reported total for the same turns: {_usd(payload['corpus_host_cost_usd'])} "
-        f"(covering all but {payload['priced_sessions_without_host_cost']} priced "
-        "sessions, whose host reports no cost).",
-        "",
-    ]
+    priced_sessions = payload["sessions_with_spend"]
+    without_host = payload["priced_sessions_without_host_cost"]
+    with_host = priced_sessions - without_host
+    if without_host:
+        lines += [
+            "**Do not read the total above against the host's.** The two cover "
+            f"different sessions: {without_host} of the "
+            f"{_sessions(priced_sessions)} run on a host that records token "
+            "counters and no cost, so they contribute modelled dollars and nothing "
+            "the host total can match.",
+            "",
+            "| Covering | Modelled (laconic.costs) | Host-reported |",
+            "| --- | ---: | ---: |",
+            f"| The {_sessions(with_host)} the host priced | "
+            f"{_usd(payload['host_reporting_cost']['total'])} | "
+            f"{_usd(payload['corpus_host_cost_usd'])} |",
+            f"| All {_sessions(priced_sessions)} | "
+            f"{_usd(payload['corpus_cost']['total'])} | not available |",
+            "",
+            "Only the first row is a comparison. The second is the corpus-wide "
+            "denominator, and the host has no figure to put beside it.",
+            "",
+        ]
+    else:
+        # Saying "do not compare these" above a table showing one set priced
+        # twice would be a false instruction, and a reader who checked it
+        # against the table would be right to stop trusting the next caveat.
+        lines += [
+            f"Host-reported total for the same turns: "
+            f"{_usd(payload['corpus_host_cost_usd'])}. Every priced session here "
+            "runs on a host that records a per-turn cost, so that figure and the "
+            "modelled total above cover the same sessions and compare directly.",
+            "",
+        ]
     lines += _split_lines(
         "Sessions the codec was active in (laconic.costs)",
         payload["matched_cost"],
         payload["matched_shares"],
     )
     lines += [
-        f"Host-reported total for the same turns: {_usd(payload['matched_host_cost_usd'])}.",
+        f"Host-reported total for the same turns: {_usd(payload['matched_host_cost_usd'])}, "
+        f"covering all but {payload['matched_sessions_without_host_cost']} of these "
+        "sessions. Both figures above cover the same sessions when that count is zero.",
         "",
         "## What the codec did in those sessions",
         "",

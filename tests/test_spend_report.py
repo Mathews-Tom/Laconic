@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -476,3 +477,89 @@ def test_an_unpriced_model_is_reported_as_a_cost_share_not_just_a_name() -> None
     estimate = mixed["estimate"]
     assert estimate is not None
     assert estimate["fallback_priced_cost_share_pct"] == 100.0
+
+
+def _no_host_cost(session_id: str) -> SessionUsage:
+    """A session whose host records token counters and no cost of its own."""
+    return SessionUsage(
+        session_id=session_id,
+        turns=(dataclasses.replace(_turn(), host_cost_usd=0.0),),
+        turns_without_usage=0,
+        malformed_lines=0,
+        unknown_usage_keys=frozenset(),
+        reports_host_cost=False,
+    )
+
+
+def test_the_modelled_total_compared_against_the_host_covers_the_hosts_own_sessions() -> None:
+    """The two totals a reader puts side by side must name the same sessions.
+
+    Claude Code records token counters and no per-turn cost. Its sessions
+    therefore add modelled dollars and nothing the host total can match, so
+    `corpus_cost` over-counts relative to `corpus_host_cost_usd` by exactly
+    those sessions. Reading the difference as a pricing disagreement is how
+    a whole-corpus ratio gets quoted as a pricing error.
+    """
+    payload = _payload(
+        usage=[_usage(MATCHED), _no_host_cost(SPEND_ONLY)],
+        decisions=[_decisions(MATCHED)],
+    )
+    validate_report_json(payload)
+
+    reporting_only = _payload(usage=[_usage(MATCHED)], decisions=[_decisions(MATCHED)])
+
+    assert payload["priced_sessions_without_host_cost"] == 1
+    # The comparable figure prices exactly the sessions the host priced, so
+    # it must equal the corpus total of a corpus holding only those.
+    assert payload["host_reporting_cost"] == reporting_only["corpus_cost"]
+    # ...and must be strictly below the all-sessions total, which is what a
+    # figure computed over every session would collapse into.
+    assert payload["host_reporting_cost"]["total"] < payload["corpus_cost"]["total"]
+    assert payload["corpus_host_cost_usd"] == pytest.approx(0.055)
+
+
+def test_the_matched_comparison_certifies_that_both_sides_cover_one_set() -> None:
+    """`matched_cost` beside `matched_host_cost_usd` needs the same certificate.
+
+    It is zero on today's corpus only because every session the codec has a
+    ledger for happens to run on a host that prices turns. The codec installs
+    into Claude Code too, so that is a fact about the corpus and not an
+    invariant; without the count the matched pair would silently become the
+    same incomparable pairing the corpus-level figures already were.
+    """
+    clean = _payload()
+    assert clean["matched_sessions_without_host_cost"] == 0
+
+    mixed = _payload(
+        usage=[_no_host_cost(MATCHED), _usage(SPEND_ONLY)],
+        decisions=[_decisions(MATCHED)],
+    )
+    assert mixed["matched_sessions_without_host_cost"] == 1
+
+
+def test_the_markdown_names_which_sessions_each_total_covers() -> None:
+    report = build_report(join([_usage(MATCHED), _no_host_cost(SPEND_ONLY)], [_decisions(MATCHED)]))
+
+    rendered = render_markdown(report)
+
+    assert "Do not read the total above against the host's" in rendered
+    assert "| The 1 priced session the host priced |" in rendered
+    assert "| All 2 priced sessions |" in rendered
+    assert "not available" in rendered
+
+
+def test_an_all_reporting_corpus_is_not_told_its_totals_are_incomparable() -> None:
+    """The directive must not fire when there is nothing to warn about.
+
+    On an OMP-only corpus every priced session reports host cost, so the
+    two totals do cover one set. Printing "do not read these against each
+    other" above a table showing them equal is a false instruction, and a
+    reader who checks it against the table is right to trust the next
+    caveat less.
+    """
+    rendered = render_markdown(build_report(join([_usage(MATCHED)], [_decisions(MATCHED)])))
+
+    assert "Do not read the total above against the host's" not in rendered
+    assert "compare directly" in rendered
+    # ...and the count that would render as "1 sessions" agrees with its noun.
+    assert "1 priced sessions" not in rendered
