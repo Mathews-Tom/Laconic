@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Changed
+
+- Rewritten `README.md`. It previously opened with four sentences of release caveats before saying what Laconic does, and never showed the one thing that explains the product: a real encoded observation. It now leads with the measurement that forced this design — cache reads are 60.3% of a real session bill and human-facing prose is 2.30% — shows a verbatim 745-line file encoded to 3,097 characters — 3,227 including the recovery header, which is what the strictly-smaller rule actually compares — with its recovery handle on the first line, and keeps every claim boundary intact: the avoided-cost figure is still labelled a model and never a measurement, the K1 kill is still published as a kill, and there is still no general token, cost, cache, or behaviour savings claim.
+
 ### Fixed
 
 - Documentation audit against the 0.12.0 codebase. Corrected the committed fixture's K4 codec-overhead figure, documented as **26.8 tokens** where the harness reports **23.56** — verified identical at the pre-0.12.0 commit, so this was a pre-existing error and not a consequence of the price change. Removed two claims that Claude Code support was still future work: it shipped in 0.11.0, and the same architecture document's own maturity boundary nine lines below one of them already said 0.12.0 packages it. Corrected a package path that never existed (`src/laconic/integrations/omp/`), an architecture section attributing `FileEncoder` and `CommandEncoder` to the dispatch module that only imports them, and a Claude Code table claiming `numLines` is preserved where the adapter deliberately recounts it. Replaced a hardcoded `laconic-0.8.0` candidate wheel in the beta runbook, which made its own documented `ls` fail for any reader following the procedure today.
