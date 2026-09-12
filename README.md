@@ -1,118 +1,193 @@
-# Laconic – Compress what a coding agent carries, not what it says.
+# Laconic
 
-> **Status: the opt-in OMP runtime beta is published.** Version 0.11.0 extends the codec to Claude Code through a transforming `PostToolUse` hook, adds guided `laconic setup` onboarding, and reports a **modelled** avoided-cost estimate through `laconic savings` — a model, never a measured saving. The repository also records the immutable incomplete M20-v1 result and the completed M20-v2 variance pilot, which reports dispersion, cross-arm cost correlations, and a confirmatory sample size but no savings figure. Version 0.12.0 corrects how that estimate is priced and how it is compared: the price registry is now the only price source, and the report puts the modelled total for the sessions the host itself priced beside the host's own figure rather than an all-sessions total the host cannot cover. The predeclared real-OMP qualification campaign passed with every safety counter at zero — see [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). It is a beta: installation is explicit and opt-in, and it makes no token, cost, cache, or behavior savings claim.
+**Your coding agent re-reads the same file on every single turn. You pay for it every single turn.**
 
-Laconic is a private, local runtime codec for existing coding agents. It reduces eligible model-visible `read`, `bash`, `grep`, and `glob` observations while preserving exact, on-demand access to omitted content. It integrates with OMP rather than replacing it.
+Laconic is a local codec that sits at your agent's tool boundary. It replaces big tool results with a structural outline and the span that was actually asked for — and keeps the exact original bytes on disk, addressable, until you explicitly purge them.
 
-> **[`docs/grounding.md`](docs/grounding.md) is the authoritative statement of what Laconic is, what it deliberately is not, and how to detect strategy drift.** Read it before proposing or reviewing changes.
-
-## How Laconic differs from Headroom
-
-[Headroom](https://github.com/headroomlabs-ai/headroom) is a broad context-compression platform: libraries, a local provider proxy, MCP tools, agent wrappers, multiple compressors, memory, cache-aware request handling, and optional output shaping. Laconic is intentionally narrower. It intercepts OMP tool results inside the host, leaves provider configuration unchanged, and focuses on coding-agent observations backed by exact local recovery.
-
-Laconic's strongest distinction is file reads. Headroom's default coding profile protects reads because agents need exact source bytes. Laconic stores those exact bytes first, then can replace a large read with a structural outline and requested span while preserving exact full or line-span expansion until explicit purge. The OMP beta adds strict-smaller replacement, bounded fail-open behavior, owner-namespaced recovery, explicit operator controls, and no Laconic telemetry or hosted service.
-
-Headroom is the stronger choice for broad client, provider, content-type, and framework coverage. Laconic is the stronger fit when the requirement is an OMP-native, provider-neutral, auditable observation boundary with durable exact recovery. No controlled head-to-head study establishes a token, cost, cache, latency, or behavior advantage for either system on the same coding-agent tasks. See [`docs/headroom-comparison.md`](docs/headroom-comparison.md) for the version-pinned comparison, evidence limits, and source links.
-
-## Install
+[![PyPI](https://img.shields.io/pypi/v/laconic)](https://pypi.org/project/laconic/)
+[![Python](https://img.shields.io/pypi/pyversions/laconic)](https://pypi.org/project/laconic/)
+[![CI](https://github.com/Mathews-Tom/laconic/actions/workflows/ci.yml/badge.svg)](https://github.com/Mathews-Tom/laconic/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 ```bash
 uv tool install laconic
-laconic setup --dry-run
 laconic setup
 ```
 
-`laconic setup` detects which coding-agent hosts are present, states what each one can actually do, installs Laconic's owned adapter for every supported host, and then reports whether the runtime has recorded a real decision. It is idempotent and never contacts a provider.
+That is the whole installation. It touches no provider configuration, proxies nothing, and needs no account.
 
-Capability differs by host, and the difference is the whole point of the table it prints:
+## Everyone is compressing the wrong thing
 
-| Host | Codec | Observe |
-| --- | --- | --- |
-| OMP | yes | yes |
-| Claude Code | yes | yes |
-| Codex | no | no |
+We measured 179 real agent sessions — 19,818 assistant turns, $2,134.27 of modelled spend — before writing any product code. The result killed our own first version:
 
-`setup` installs the codec on OMP, and on Claude Code installs both a transforming `PostToolUse` hook and content-free receipt hooks as separate owners of one settings file. Codex has no adapter of either kind.
+| Where the money goes | Share of spend |
+| --- | ---: |
+| **Cache reads** — re-ingesting the resident context, turn after turn | **60.3%** |
+| Cache writes | 26.7% |
+| **Everything the model says** — prose, patches, commands | 11.3% |
+| Uncached input | 1.7% |
 
-The two hosts compress by different mechanisms and over different tool sets. OMP intercepts every eligible tool result; Claude Code replaces `Bash` and `Read` results through a hook, and does not expose `Grep` or `Glob` as tools at all. See [`docs/claude-code-codec.md`](docs/claude-code-codec.md) for the shape-fidelity constraint that design is built around and what it removed on real sessions.
+Human-facing prose is **2.30%** of the bill. 80.6% of turns emit no prose at all. Compressing *that prose* by 44% — our own v1's best measured result — moves a real session bill by **1.01%**. Deleting every word of prose saves 2.30%. That is the ceiling, and it is not a product.
 
-Installing writes a file; it does not prove the codec ran. Start a session on a host whose codec column is `yes`, invoke a `read`, `bash`, `grep`, or `glob` tool, then:
+Meanwhile tool results sitting resident in the prefix are **≈38.1% of total spend**, seventeen times the entire prose channel, and the mean resident prefix is **205,842 tokens per turn**.
+
+The bill is not what your agent *says*. It is what your agent *carries*.
+
+That corpus is the author's own and is not shipped. What you can do is run the identical measurement over *your* sessions, or over the fixture committed to this repo:
 
 ```bash
-laconic setup --verify-only
+uv run python scripts/measure_session_composition.py   # your own transcripts
+uv run laconic research measure tests/corpus           # the committed fixture
 ```
 
-A confirmed line means the runtime decided a real observation. A codec that decided to pass everything through is still working — most tool results are too small to shrink, and declining them is the correct outcome.
+## What it actually does
 
-To install a single adapter by hand instead, use `laconic install omp` or `laconic diagnostics observe install --client claude-code`. Use `/laconic status|pause|resume` in an active OMP session, `laconic status` for content-free aggregate health, and `laconic expand '<session>/F1[:first-last]'` for exact operator recovery. See [`docs/omp-runtime.md`](docs/omp-runtime.md) before installing or purging data.
+Your agent reads a 745-line file. Here is what it receives instead — the real output of `laconic.ledger` encoding its own source:
 
-## Modelled cost avoided
+```text
+[laconic 01a0f3c2-.../X1 | full: laconic_expand({"reference":"01a0f3c2-.../X1"})]
+"""Content-addressed store of every observation the codec has elided.
+
+The ledger upholds the design's central invariant: compression is lossy in
+presentation, lossless in reach. Anything an encoder removes from what the
+model sees stays addressable here, so every elision is reversible.
+...
+  [4 error lines from the elided region]
+  [... 665 lines elided — expand with the handle]
+...
+        self.close()
+```
+
+**29,186 characters in, 3,097 out** — 89% fewer characters at the tool boundary. The recovery header is counted too, so the complete envelope the model actually receives is 3,227 characters, and Laconic emits it only because *that* total is still smaller than the original. (The reference is abbreviated above for width; a real one carries the full session id.)
+
+Nothing is gone. The first line carries the handle, so the model can pull the full file or any line span back itself, mid-task, without asking you.
+
+Note the second-to-last line. Lines that look like errors get lifted *out* of the elided region and kept, because a traceback buried in the middle of a file is exactly the thing you cannot afford to elide silently.
+
+That is the trade other compressors cannot make. Headroom's default coding profile deliberately *protects* file reads from compression, because an agent needs exact bytes to patch a file. Laconic stores the exact bytes first, which is what makes reducing the read safe at all.
+
+## Why you can leave it on
+
+**Nothing is lost.** Raw content commits to a local ledger *before* a replacement is allowed to exist. Every emitted reference expands exactly — byte for byte, including code points a strict encoder would reject. Across the qualification campaign, exact-expansion failures: **0**.
+
+**It declines more often than it fires.** A replacement is emitted only when the complete recovery-bearing envelope — handle, header and all — is strictly smaller than the original. In the qualification campaign it passed 96 of 137 eligible observations straight through untouched. A codec that refuses 70% of its opportunities is a codec that isn't guessing.
+
+**It fails open, in every direction.** Engine missing, spawn failure, crash, malformed response, deadline breach, storage error — you get the original tool result. There is a 250 ms steady-state deadline and a three-consecutive-failure circuit breaker. A crash costs compression, never correctness.
+
+**It's fast enough to forget about.** p50 **1.45 ms**, p95 **18.65 ms**.
+
+**It's yours.** No telemetry, no hosted service, no beacon. Exactly one command in this entire tool reaches the network — `laconic pricing update` — and only when you type it. Raw observations never leave your machine. Reports are content-free by construction and then re-checked by an independent privacy gate that refuses to serialize a single key it cannot certify; a new field with no shape check fails loudly rather than shipping uncertified.
+
+**You can always get out.** `laconic status` to inspect, `/laconic pause` mid-session, `laconic uninstall` to restore native behaviour, and `laconic purge` as a separate, deliberate act. Uninstalling never deletes your recovery ledgers; purging is something you have to mean.
+
+## Two hosts, one engine
+
+```bash
+laconic setup
+```
+
+`setup` detects what you actually have, installs what each host supports, and then tells you whether the codec has recorded a real decision yet — because installing a file is not evidence that anything ran.
+
+| Host | Codec | Diagnostics | What it hooks |
+| --- | --- | --- | --- |
+| OMP | yes | yes | Native extension over `read`, `bash`, `grep`, `glob` |
+| Claude Code | yes | yes | Transforming `PostToolUse` hook over `Bash` and `Read` |
+| Codex | no | no | No adapter ships, and Laconic says so rather than pretending |
+
+Both adapters are thin. They drive the same Python engine, so the strictly-smaller rule, the ledger, reference minting and exact recovery are shared rather than forked per host.
+
+```bash
+laconic setup --verify-only    # did it actually run?
+```
+
+## What it costs you — and what we refuse to claim
 
 ```bash
 laconic savings
 ```
 
-It prints the spend composition, writes both artifacts, and closes with the band:
+Verbatim, from this machine:
 
 ```text
 Modelled cost avoided
-  $54.24 to $124.56  (3.56% to 8.18%)
-  against a modelled $1,522.64 for the same sessions
+  $110.80 to $255.82  (4.58% to 10.58%)
+  against a modelled $2,418.27 for the sessions this estimate covers
   A model, not a measurement: no session ran without the codec, so
   this is what the removed characters would have cost, not a saving
   anyone observed. Every assumption is listed in the written report.
 ```
 
-Scans this machine's own sessions across both hosts and writes a local, content-free composition of where your model spend went, alongside a **modelled** estimate of what the codec's removed characters would otherwise have cost.
+The command carries its own caveat because the caveat is load-bearing.
 
-`laconic status` shows the last band and how old it is. It does not recompute one: producing an estimate joins every session transcript against the runtime ledgers and takes tens of seconds, and `status` earns its keep by answering immediately.
+**It is a model, not a measurement, and it says so in code.** Every session Laconic has ever recorded ran with the codec *on*. There is no counterfactual anywhere in that data, so there is nothing to subtract. The figure carries `basis: modelled_not_measured` in the JSON, and the privacy gate refuses to serialize the block under any other value.
 
-The estimate is a band, not a figure, and it is labelled `modelled_not_measured` everywhere it appears. Every session Laconic has ever recorded ran with the codec **on**, so no counterfactual exists and **nothing here is a measured saving**.
+It is a *band* because more than one input is assumed — characters per token, and how much of your corpus's cache re-read rate the removed tokens would really have seen. That second assumption carries most of the price, so it is banded rather than stated as fact.
 
-What the model does is divide the per-token cache prices out of your own corpus rather than a price table. What it assumes — and therefore what the band spans — is how many characters a token carries, and how much of your corpus's cache re-read rate the removed tokens would really have seen. That second assumption is most of the price, so it is banded rather than stated as fact.
+**And it withholds itself when it shouldn't be trusted.** Prices resolve through a registry that ships 3,134 models offline. When more than 25% of the cost the estimate is built from comes from models with no published list price, `status`, `savings` and the written report stop printing dollars and lead with the percentage instead — because the same pricing error sits in the numerator and the denominator and largely cancels in a share, but not in a dollar figure.
 
-The re-read term is why tool-boundary removal is worth more than its character count suggests. Text removed there is written to the prompt cache once and re-read never, so removal compounds across a session instead of saving once. The corpus average overstates it for tool output, which arrives later in a session than the system prompt it is averaged with, so the low end of the band discounts it.
+We found that out the hard way. A hand-written price table was shadowing that registry and had gone stale on two models; it inflated our own modelled corpus by $2,331.82 — more than the entire discrepancy we were chasing. It is gone, and the fix is a structural test that fails if any second price source is ever put in front of the registry again.
+
+**What we will not say:** that Laconic saves you tokens, money, cache or latency in general. Character reduction at the tool boundary is a character count. The conversion to tokens and then to money is lossy and workload-dependent, and we do not have the paired evidence that would license the claim. Our own research gate measured **8.41%** net cost reduction on a committed fixture against a pre-registered 15% threshold — that is a **kill**, published rather than buried, and it still bounds any general savings claim this project could make.
+
+If that honesty is a dealbreaker, this is the wrong tool. If it is the reason you'd trust the rest, welcome.
+
+## Verify the claims above
+
+Nothing here rests on our summary of ourselves.
+
+```bash
+laconic status                                  # your own decisions, counts, recovery ledger
+laconic expand '<session>/X1'                   # pull any elided observation back, exactly
+laconic expand '<session>/X1:40-90'             # or just a line span
+uv run laconic research gates --corpus tests/corpus --format json
+```
+
+Upgrading from 0.8.0 or earlier? Offline research commands moved under an
+explicit namespace: `laconic measure` and `laconic gates` are now
+`laconic research measure` and `laconic research gates`.
+
+That last command exits **non-zero**, deliberately: our own K1 gate is a kill on
+the committed fixture, and the harness reports it as one.
+
+The qualification campaign's generated report is committed verbatim, including the counters that would have failed it: [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md). Ten sessions, three repositories, 137 eligible observations, all 26 required failure and lifecycle scenarios exercised with none missing, every safety counter zero, and 35.84% character reduction on that read-heavy workload — a figure that describes *that* workload and nothing else.
 
 ## Documentation
 
 | Document | What's in it |
 | --- | --- |
-| [`docs/grounding.md`](docs/grounding.md) | Product boundary, invariants, runtime gate, and drift checks |
-| [`docs/omp-runtime.md`](docs/omp-runtime.md) | Runtime installation, interception boundary, recovery, controls, uninstall, and purge |
-| [`docs/claude-code-codec.md`](docs/claude-code-codec.md) | Claude Code transforming `PostToolUse` hook: setup, shape fidelity, measured limits |
-| [`docs/headroom-comparison.md`](docs/headroom-comparison.md) | Version-pinned comparison with Headroom: product boundaries, strengths, recovery, privacy, and evidence limits |
+| [`docs/grounding.md`](docs/grounding.md) | **Start here.** What Laconic is, what it deliberately is not, and how to detect strategy drift |
+| [`docs/omp-runtime.md`](docs/omp-runtime.md) | OMP install, interception boundary, recovery, controls, uninstall, purge |
+| [`docs/claude-code-codec.md`](docs/claude-code-codec.md) | The Claude Code hook, its shape-fidelity constraint, and its measured limits |
+| [`docs/overview.md`](docs/overview.md) | The full measurement that defines the problem, and the positioning it forces |
+| [`docs/system-design.md`](docs/system-design.md) | Architecture: engine, ledger, codec, price registry, protocol boundaries |
+| [`docs/headroom-comparison.md`](docs/headroom-comparison.md) | Version-pinned comparison with Headroom, including where Headroom is the better choice |
 | [`docs/research-disposition.md`](docs/research-disposition.md) | Prior evidence, terminal research outcomes, and claims that remain unproven |
-| [`docs/pitch.md`](docs/pitch.md) | The short version: problem, measured channel opportunity, product boundary, and limitations |
-| [`docs/overview.md`](docs/overview.md) | Full what/why/how, measurements, positioning, and separated product/research gates |
-| [`docs/system-design.md`](docs/system-design.md) | OMP-first runtime architecture, recovery, protocol boundaries, and supporting components |
+| [`docs/pitch.md`](docs/pitch.md) | The short version |
+| [`docs/spend-comparison-design.md`](docs/spend-comparison-design.md) | Why a single-arm corpus cannot produce a savings figure, and the pilot that tried |
+| [`docs/observe-cli.md`](docs/observe-cli.md) | `laconic diagnostics observe`: content-free local diagnostics |
 | [`docs/observe-design.md`](docs/observe-design.md) | Observe as a released, automatic, content-free diagnostic surface |
-| [`docs/observe-cli.md`](docs/observe-cli.md) | `laconic diagnostics observe` guide: install/remove/status/report |
-| [`docs/k1-stage-a-cli.md`](docs/k1-stage-a-cli.md) | `laconic research k1 stage-a scan` metadata feasibility guide |
-| [`docs/k1-stage-b-manifest-cli.md`](docs/k1-stage-b-manifest-cli.md) | `laconic research k1 stage-b build-manifest` guide |
-| [`docs/runtime-beta-report.md`](docs/runtime-beta-report.md) | The qualification campaign's generated aggregate report, committed verbatim |
-| [`docs/runtime-beta-runbook.md`](docs/runtime-beta-runbook.md) | How that campaign is frozen, run, and reported with `python -m laconic.beta` |
-| [`docs/spend-comparison-design.md`](docs/spend-comparison-design.md) | Controlled-spend design, immutable incomplete M20-v1 result, and the completed M20-v2 variance pilot |
+| [`docs/runtime-beta-runbook.md`](docs/runtime-beta-runbook.md) | How the qualification campaign is frozen, run and reported |
 
-## Source checkout
-
-Releases from 0.9.0 onward contain the runtime, codec, evaluation, rendering, and Observe surfaces. Version 0.10.0 added read-only spend-composition reporting. Version 0.11.0 adds the Claude Code codec adapter, `laconic setup`, and `laconic savings`, and versions repository-only controlled-spend research tooling whose M20-v2 pilot has now run once and completed. Version 0.12.0 makes the price registry the only source of model prices and reports a modelled total that covers the same sessions as the host-reported one. Versions up to 0.8.0 had no live runtime integration and exposed research commands at the top level, such as `laconic measure` and `laconic gates`. Since 0.9.0 those commands live under the explicit `research` namespace:
+## Working on it
 
 ```bash
-uv run laconic research measure tests/corpus --expect tests/corpus/expected.json
-uv run laconic research gates --corpus tests/corpus --format json
-laconic --help
+uv sync
+uv run ruff check . && uv run ruff format --check .
+uv run mypy --strict src
+uv run python -m pytest -q
 ```
 
-The committed fixture reports K1 net savings of 8.41% against its pre-registered 15% research threshold. It validates the gate machinery but is not representative deployment evidence. That result does not block the bounded OMP beta, and the beta will not claim general token, cost, cache, or behavior savings from character reduction. The qualification campaign separately measured 35.84% character reduction across ten agent-driven read-heavy investigation sessions; that figure describes that workload only, and no savings threshold gates the beta. See the "Beta qualification result" section of [`docs/omp-runtime.md`](docs/omp-runtime.md) for how the campaign was produced and what it does not establish.
+Python 3.12+, `uv`, `mypy --strict`, 1,596 tests. `docs/grounding.md` is the charter — changes are expected to advance the runtime, recovery, fail-open behaviour, operator control, packaging or bounded proof, and not to quietly widen a claim.
 
-## Product roadmap
+## Roadmap
 
-1. ~~Build a transport-neutral session engine with namespaced exact recovery and strict-smaller decisions.~~
-2. ~~Package an ownership-safe OMP extension with a 250 ms deadline, fail-open behavior, expansion, and operator controls.~~
-3. ~~Qualify the built package through at least 10 completed real OMP sessions across 3 repositories and at least 100 eligible observations.~~
-4. ~~Publish the opt-in OMP beta.~~ Published as `v0.9.0`, with `v0.9.1` correcting a cold-start defect that only a clean first install could reach.
-5. ~~Measure where model spend goes and build a controlled-comparison protocol without overclaiming.~~ The single-arm composition report contains no savings figure; M20-v1 ended incomplete; M20-v2 ran once and completed, publishing variance and feasibility only, with arm means and the paired effect held private.
-6. Design the Claude Code adapter separately after the protocol survives OMP dogfood. MCP, action rewriting, and history compaction remain deferred.
+1. ~~Transport-neutral session engine with namespaced exact recovery and strict-smaller decisions.~~
+2. ~~Ownership-safe OMP extension with a 250 ms deadline, fail-open behaviour, expansion and operator controls.~~
+3. ~~Qualify the built package through real OMP sessions across multiple repositories.~~
+4. ~~Publish the opt-in beta.~~ `v0.9.0`, with `v0.9.1` fixing a cold-start defect only a clean first install could reach.
+5. ~~Measure where model spend actually goes, without overclaiming.~~ Single-arm, no savings figure; M20-v1 ended incomplete, M20-v2 published variance and feasibility only.
+6. ~~Extend the codec to a second host.~~ Claude Code, `v0.11.0`.
+7. Earn a savings claim, or keep declining to make one. Needs a real comparison arm; MCP, action rewriting and history compaction stay deferred until runtime evidence justifies them.
 
 ## License
 
