@@ -4,7 +4,7 @@ Laconic and [Headroom](https://github.com/headroomlabs-ai/headroom) both reduce 
 
 **Headroom is a broad context-compression platform. Laconic is a narrow coding-agent runtime codec.** Headroom provides libraries, a provider proxy, MCP tools, agent wrappers, multiple compressors, cache-aware request handling, memory, and optional output shaping. Laconic integrates directly with OMP's tool-result lifecycle and changes only eligible tool observations, backed by durable exact recovery.
 
-This comparison uses Laconic 0.11.1 and Headroom 0.37.0. It describes product contracts and shipped defaults, not a measured head-to-head performance result.
+This comparison uses Laconic 0.12.0 and Headroom 0.37.0. It describes product contracts and shipped defaults, not a measured head-to-head performance result.
 
 ## Comparison
 
