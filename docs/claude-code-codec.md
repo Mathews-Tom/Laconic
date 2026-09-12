@@ -40,7 +40,7 @@ The reference is printed on the first line of every replaced result, so the mode
 | Tool | Replaced field | Notes |
 | --- | --- | --- |
 | `Bash` | `stdout` | `stderr`, `interrupted`, and every other key pass through untouched |
-| `Read` | `file.content` | Text reads only; `filePath`, `numLines`, `startLine`, `totalLines` are preserved |
+| `Read` | `file.content` | Text reads only. `filePath`, `startLine`, and `totalLines` describe the file on disk and stay untouched; `numLines` describes what was *returned*, so it is recounted from the replacement — leaving it alone would tell the model it received more lines than it can see |
 
 `Grep` and `Glob` are absent deliberately: Claude Code does not expose them as tools. Across every Claude Code transcript on the development machine they account for two calls, both of which returned *"No such tool available"*. That work arrives through `Bash`.
 
@@ -50,7 +50,7 @@ The reference is printed on the first line of every replaced result, so the mode
 
 Claude Code **silently ignores** a replacement that does not match the tool's output shape and uses the original instead. There is no error and no signal back to the hook, so a schema the adapter merely believes in would degrade into an invisible no-op the moment Claude Code adds a field.
 
-The adapter therefore deep-copies the observed `tool_response` and overwrites exactly one field inside the copy. Unknown keys survive because they are never enumerated. This is not hypothetical: real transcripts carry `noOutputExpected`, `gitOperation`, `persistedOutputPath`, and `persistedOutputSize` on `Bash` results, and none of them appears in the published example.
+The adapter therefore deep-copies the observed `tool_response` and overwrites only the field carrying the shrinkable text — `stdout` for `Bash`, `file.content` for `Read` — plus `file.numLines` when that key is present, because it counts the returned lines rather than describing the file. Nothing else is touched. Unknown keys survive because they are never enumerated. This is not hypothetical: real transcripts carry `noOutputExpected`, `gitOperation`, `persistedOutputPath`, and `persistedOutputSize` on `Bash` results, and none of them appears in the published example.
 
 ## Measured on real sessions
 
