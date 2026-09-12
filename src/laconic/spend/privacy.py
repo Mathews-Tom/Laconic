@@ -38,7 +38,7 @@ _MAX_MODEL_LENGTH: Final = 64
 _TOKEN_BLOCK_KEYS: Final = frozenset({"corpus_tokens", "matched_tokens"})
 
 #: Report keys whose value is a cost block.
-_COST_BLOCK_KEYS: Final = frozenset({"corpus_cost", "matched_cost"})
+_COST_BLOCK_KEYS: Final = frozenset({"corpus_cost", "matched_cost", "host_reporting_cost"})
 
 #: Report keys whose value is a share block, or ``None`` when there was no
 #: spend to apportion.

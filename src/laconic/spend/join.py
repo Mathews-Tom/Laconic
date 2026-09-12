@@ -113,6 +113,19 @@ class Composition:
         return len(self.sessions) - len(self.priced)
 
     @property
+    def host_reporting(self) -> tuple[SessionComposition, ...]:
+        """Priced sessions whose host records a per-turn cost of its own.
+
+        The set ``host_cost_usd`` can actually cover. A Claude Code session
+        records token counters and no cost, so it contributes modelled
+        dollars and nothing to the host total; summing every session's
+        modelled cost and comparing it to the host total therefore compares
+        two different corpora. This property is what makes the two sides of
+        that comparison name the same sessions.
+        """
+        return tuple(session for session in self.priced if session.reports_host_cost)
+
+    @property
     def matched(self) -> tuple[SessionComposition, ...]:
         """Sessions that carry a runtime ledger, priced or not."""
         return tuple(session for session in self.sessions if session.decisions is not None)

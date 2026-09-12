@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Fixed
+
+- The spend report no longer presents its whole-corpus modelled total and the host-reported total as a comparison. They never covered the same sessions: Claude Code records token counters and no per-turn cost, so on the development corpus **116 of 2,683** priced sessions contributed modelled dollars and nothing the host total could match, and the resulting **+48.92%** difference read as a pricing error for two sessions running. A new `host_reporting_cost` block prices exactly the sessions the host priced, the Markdown puts that figure beside the host's in a two-row table and labels which sessions each row covers, and `matched_sessions_without_host_cost` carries the same certificate for the matched pair. On a corpus where every priced session does report host cost, the report says the two compare directly instead of warning against a comparison that is sound. Report schema version 2.
+
 ### Added
 
 - Model list prices now resolve through a registry with three layers: a local override file, a registry downloaded by `laconic pricing update`, and a bundled snapshot pinned to one upstream commit and shipped in the wheel. The bundled layer prices **3,134 models** and keeps the default path entirely offline.
