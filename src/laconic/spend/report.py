@@ -47,6 +47,7 @@ LIMITATIONS: Final = (
     "no_counterfactual_exists_so_no_savings_figure_can_be_derived",
     "character_reduction_is_not_token_reduction",
     "cost_is_modelled_from_token_counters_never_billed_by_a_provider",
+    "cache_writes_are_priced_at_one_rate_although_lifetimes_bill_differently",
     "sessions_are_not_controlled_units_and_are_not_comparable",
     "a_ledger_only_proves_the_codec_ran_not_that_it_covered_the_session",
     "committed_k1_fixture_8_41_pct_still_bounds_general_savings_claims",
@@ -475,6 +476,17 @@ _LIMITATION_PROSE: Final = {
         "Both dollar figures are modelled from token counters. Providers return "
         "counters, not prices: the host figure is OMP's own price table, the "
         "Laconic figure is laconic.costs. Neither is a bill."
+    ),
+    "cache_writes_are_priced_at_one_rate_although_lifetimes_bill_differently": (
+        "Every cache write is priced at one rate per model. Anthropic bills a "
+        "one-hour cache write at twice the input price where a five-minute write "
+        "bills at 1.25x, and OMP's transcripts mark which is which: on the "
+        "development corpus 65.4% of cache-write tokens are one-hour. This "
+        "under-prices, never over-prices, so it can only make a modelled figure "
+        "smaller than the provider's. It is not corrected here because the host's "
+        "own accounting cannot adjudicate it -- OMP charged the higher rate on "
+        "only 14.7% of the tokens it had itself marked one-hour, so matching the "
+        "host would mean pricing 85% of them against its own lower figure."
     ),
     "sessions_are_not_controlled_units_and_are_not_comparable": (
         "A session is not a controlled unit. Sessions differ in length, "
